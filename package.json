@@ -2,6 +2,7 @@
   "name": "echo-effect",
   "type": "module",
   "version": "0.0.0",
+  "packageManager": "pnpm@9.15.9",
   "description": "`EchoEffect` is a powerful dependency impact analysis tool designed for the entire frontend ecosystem. It helps developers understand the ripple effects of code changes across their projects by mapping and analyzing dependency chains.",
   "author": "huali <zcf0508@live.com>",
   "license": "MIT",
@@ -21,7 +22,11 @@
   "main": "./dist/index.mjs",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.mts",
+  "bin": {
+    "echo-effect": "./bin/cli.js"
+  },
   "files": [
+    "bin",
     "dist"
   ],
   "scripts": {
@@ -35,9 +40,31 @@
     "typecheck": "tsc --noEmit",
     "prepare": "simple-git-hooks"
   },
+  "peerDependencies": {
+    "@vue/compiler-dom": "^3.0.0",
+    "@vue/compiler-sfc": "^3.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@vue/compiler-dom": {
+      "optional": true
+    },
+    "@vue/compiler-sfc": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@antfu/install-pkg": "catalog:",
+    "@clack/prompts": "catalog:",
+    "consola": "catalog:cli",
+    "local-pkg": "catalog:",
+    "madge": "catalog:"
+  },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:cli",
+    "@types/madge": "catalog:",
     "@types/node": "catalog:types",
+    "@vue/compiler-dom": "catalog:",
+    "@vue/compiler-sfc": "catalog:",
     "bumpp": "catalog:cli",
     "eslint": "catalog:cli",
     "lint-staged": "catalog:cli",
