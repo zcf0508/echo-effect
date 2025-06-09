@@ -116,8 +116,6 @@ export async function parseVueTemplateForComponents(
     return [];
   }
 
-  await ensurePackages(['@vue/compiler-sfc']);
-
   const content = fs.readFileSync(filePath, 'utf-8');
 
   const { descriptor, errors } = (await interopDefault(
@@ -133,8 +131,6 @@ export async function parseVueTemplateForComponents(
   }
 
   const templateContent = descriptor.template.content;
-
-  await ensurePackages(['@vue/compiler-dom']);
 
   const templateAst = (await interopDefault(
     import('@vue/compiler-dom'),

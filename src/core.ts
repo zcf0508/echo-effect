@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import madge from 'madge';
-import { createComponentResolver, isNuxtProject, parseVueTemplateForComponents } from './vue';
+import { ensurePackages } from './utils';
+import { createComponentResolver, isNuxtProject, isVue, parseVueTemplateForComponents } from './vue';
 
 export function getStagedFiles(): Set<string> {
   const gitOutput = execSync('git diff --name-only --cached --diff-filter=AM', {
@@ -51,50 +52,57 @@ export async function scanFile(
   const instance: MadgeInstance = await madge(entryPath, config);
   const dependencyObject = instance.obj();
 
-  const newLinkedComponents = new Set<string>();
+  if (isVue()) {
+    if (isRoot) {
+      await ensurePackages(['@vue/compiler-sfc']);
+      await ensurePackages(['@vue/compiler-dom']);
+    }
 
-  await Promise.all(
-    Object.entries(dependencyObject).map(async ([_, dependencies]) => {
-      const vueFiles = Array.from(new Set(dependencies.flat())).filter(file => file.endsWith('.vue'));
+    const newLinkedComponents = new Set<string>();
 
-      await Promise.all(
-        vueFiles.map(async (file) => {
-          const components = (await parseVueTemplateForComponents(file, resolveComponent)).map(
-            compPath => compPath.replace(process.cwd(), '').slice(1),
-          );
+    await Promise.all(
+      Object.entries(dependencyObject).map(async ([_, dependencies]) => {
+        const vueFiles = Array.from(new Set(dependencies.flat())).filter(file => file.endsWith('.vue'));
 
-          if (dependencyObject[file]) {
-            components.forEach((compPath) => {
-              if (!dependencyObject[file].includes(compPath)) {
-                dependencyObject[file].push(compPath);
-                newLinkedComponents.add(compPath);
-              }
-            });
-          }
-          else {
-            dependencyObject[file] = components;
-          }
-        }),
-      );
-    }),
-  );
+        await Promise.all(
+          vueFiles.map(async (file) => {
+            const components = (await parseVueTemplateForComponents(file, resolveComponent)).map(
+              compPath => compPath.replace(process.cwd(), '').slice(1),
+            );
 
-  if (newLinkedComponents.size && isRoot) {
-    const newDependencyObject = await scanFile(
-      Array.from(newLinkedComponents),
-      resolveComponent,
-      isNuxt,
-      false,
+            if (dependencyObject[file]) {
+              components.forEach((compPath) => {
+                if (!dependencyObject[file].includes(compPath)) {
+                  dependencyObject[file].push(compPath);
+                  newLinkedComponents.add(compPath);
+                }
+              });
+            }
+            else {
+              dependencyObject[file] = components;
+            }
+          }),
+        );
+      }),
     );
 
-    Object.entries(newDependencyObject).forEach(([file, dependencies]) => {
-      if (!dependencyObject[file]) {
-        dependencyObject[file] = dependencies;
-      }
-      else {
-        dependencyObject[file] = [...new Set([...dependencyObject[file], ...dependencies])];
-      }
-    });
+    if (newLinkedComponents.size && isRoot) {
+      const newDependencyObject = await scanFile(
+        Array.from(newLinkedComponents),
+        resolveComponent,
+        isNuxt,
+        false,
+      );
+
+      Object.entries(newDependencyObject).forEach(([file, dependencies]) => {
+        if (!dependencyObject[file]) {
+          dependencyObject[file] = dependencies;
+        }
+        else {
+          dependencyObject[file] = [...new Set([...dependencyObject[file], ...dependencies])];
+        }
+      });
+    }
   }
 
   return dependencyObject;
