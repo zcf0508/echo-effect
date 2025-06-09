@@ -10,6 +10,56 @@
 It helps developers understand the ripple effects of code changes across their projects
 by mapping and analyzing dependency chains.
 
+## Key Features
+
+*   **Git Staged File Analysis**: Focuses specifically on the changes you're about to commit.
+*   **Comprehensive Dependency Mapping**: Leverages `madge` to understand import/export relationships in:
+    *   JavaScript (`.js`, `.jsx`)
+    *   TypeScript ([.ts](cci:7://file:///Users/zyb/Desktop/zcf0508/echo-effect/src/vue.ts:0:0-0:0), `.tsx`)
+    *   Vue.js Single File Components (`.vue`)
+    *   ES Modules (`.mjs`) and CommonJS (`.cjs`)
+*   **Advanced Vue.js & Nuxt.js Support**:
+    *   Parses `<template>` sections in `.vue` files to identify component dependencies.
+    *   Intelligently resolves components from `unplugin-vue-components`.
+    *   Prompts to install necessary Vue parsing dependencies (`@vue/compiler-sfc`, `@vue/compiler-dom`) if missing.
+*   **Impact Level Reporting**: Clearly visualizes the chain of impact:
+    *   **Level 0**: Your directly modified staged files.
+    *   **Level 1+**: Files that depend on Level 0 files, and so on, up to a configurable depth.
+*   **CLI Interface**: Easy to integrate into your development workflow.
+
+## How It Works
+
+1.  **Identifies Staged Files**: Runs `git diff --name-only --cached --diff-filter=AM`
+to get a list of added or modified files in your Git staging area.
+2.  **Builds Dependency Graph**: Scans your project from a specified entry point using `madge`
+to map out all module dependencies.
+For Vue/Nuxt projects, it performs additional parsing for template components.
+3.  **Constructs Reverse Dependency Graph**: Inverts the dependency map to understand "who depends on whom."
+4.  **Calculates Impact**: Compares the staged files against the reverse dependency graph
+to trace and report all affected files.
+5.  **Prints Report**: Outputs a clear, color-coded report to the console, detailing the modified and affected files.
+
+## Usage
+
+Navigate to your project's root directory and run:
+
+```bash
+npx -y echo-effect <path-to-your-project-entry-file>
+```
+
+For example:
+
+```bash
+# For a project with src/main.ts as an entry point
+npx -y echo-effect src/main.ts
+```
+
+## Why Echo Effect?
+- Proactive Risk Assessment: Understand the potential blast radius of your changes before you commit or push.
+- Focused Code Reviews: Helps reviewers concentrate on the most critical areas affected by a change.
+- Enhanced Codebase Understanding: Provides insights into the interconnectedness of your project's modules.
+- Safer Refactoring: Make larger changes with more confidence by seeing their downstream effects.
+
 ## License
 
 [MIT](./LICENSE) License © [huali](https://github.com/zcf0508)
