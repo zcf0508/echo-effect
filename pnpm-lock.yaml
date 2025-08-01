@@ -123,6 +123,12 @@ importers:
       '@clack/prompts':
         specifier: 'catalog:'
         version: 0.11.0
+      '@vue/compiler-dom':
+        specifier: 'catalog:'
+        version: 3.5.16
+      '@vue/compiler-sfc':
+        specifier: 'catalog:'
+        version: 3.5.16
       chalk:
         specifier: catalog:madge
         version: 4.1.2
@@ -172,12 +178,6 @@ importers:
       '@types/node':
         specifier: catalog:types
         version: 22.13.10
-      '@vue/compiler-dom':
-        specifier: 'catalog:'
-        version: 3.5.16
-      '@vue/compiler-sfc':
-        specifier: 'catalog:'
-        version: 3.5.16
       bumpp:
         specifier: catalog:cli
         version: 10.1.0

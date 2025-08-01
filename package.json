@@ -39,21 +39,11 @@
     "typecheck": "tsc --noEmit",
     "prepare": "simple-git-hooks"
   },
-  "peerDependencies": {
-    "@vue/compiler-dom": "^3.0.0",
-    "@vue/compiler-sfc": "^3.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@vue/compiler-dom": {
-      "optional": true
-    },
-    "@vue/compiler-sfc": {
-      "optional": true
-    }
-  },
   "dependencies": {
     "@antfu/install-pkg": "catalog:",
     "@clack/prompts": "catalog:",
+    "@vue/compiler-dom": "catalog:",
+    "@vue/compiler-sfc": "catalog:",
     "chalk": "catalog:madge",
     "commander": "catalog:madge",
     "commondir": "catalog:madge",
@@ -72,8 +62,6 @@
     "@antfu/eslint-config": "catalog:cli",
     "@types/madge": "catalog:",
     "@types/node": "catalog:types",
-    "@vue/compiler-dom": "catalog:",
-    "@vue/compiler-sfc": "catalog:",
     "bumpp": "catalog:cli",
     "dependency-tree": "catalog:",
     "eslint": "catalog:cli",
