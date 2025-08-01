@@ -52,6 +52,9 @@ catalogs:
     '@vue/compiler-sfc':
       specifier: ^3.5.16
       version: 3.5.16
+    dependency-tree:
+      specifier: 11.1.1
+      version: 11.1.1
     local-pkg:
       specifier: ^1.1.1
       version: 1.1.1
@@ -70,6 +73,11 @@ catalogs:
     tinyexec:
       specifier: ^0.3.2
       version: 0.3.2
+
+patchedDependencies:
+  dependency-tree:
+    hash: swqjbe5dncw3nquwb4sjirrl6i
+    path: patches/dependency-tree.patch
 
 importers:
 
@@ -109,6 +117,9 @@ importers:
       bumpp:
         specifier: catalog:cli
         version: 10.1.0
+      dependency-tree:
+        specifier: 'catalog:'
+        version: 11.1.1(patch_hash=swqjbe5dncw3nquwb4sjirrl6i)
       eslint:
         specifier: catalog:cli
         version: 9.22.0(jiti@2.4.2)
@@ -4089,7 +4100,7 @@ snapshots:
 
   defu@6.1.4: {}
 
-  dependency-tree@11.1.1:
+  dependency-tree@11.1.1(patch_hash=swqjbe5dncw3nquwb4sjirrl6i):
     dependencies:
       commander: 12.1.0
       filing-cabinet: 5.0.3
@@ -4909,7 +4920,7 @@ snapshots:
       commander: 7.2.0
       commondir: 1.0.1
       debug: 4.4.0
-      dependency-tree: 11.1.1
+      dependency-tree: 11.1.1(patch_hash=swqjbe5dncw3nquwb4sjirrl6i)
       ora: 5.4.1
       pluralize: 8.0.0
       pretty-ms: 7.0.1

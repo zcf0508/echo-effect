@@ -34,6 +34,7 @@ export default antfu(
         ],
         'comma-dangle': ['error', 'always-multiline'],
         'style/quotes': ['error', 'single'],
+        'pnpm/json-prefer-workspace-settings': 'off',
       },
     },
   ],

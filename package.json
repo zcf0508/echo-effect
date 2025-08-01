@@ -66,6 +66,7 @@
     "@vue/compiler-dom": "catalog:",
     "@vue/compiler-sfc": "catalog:",
     "bumpp": "catalog:cli",
+    "dependency-tree": "catalog:",
     "eslint": "catalog:cli",
     "lint-staged": "catalog:cli",
     "simple-git-hooks": "catalog:cli",
@@ -75,6 +76,11 @@
     "unbuild": "catalog:cli",
     "vite": "catalog:cli",
     "vitest": "catalog:testing"
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "dependency-tree": "patches/dependency-tree.patch"
+    }
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm i --frozen-lockfile --ignore-scripts --offline && npx lint-staged"
