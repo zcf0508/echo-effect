@@ -16,12 +16,12 @@
   "keywords": [],
   "sideEffects": false,
   "exports": {
-    ".": "./dist/index.mjs",
+    ".": "./dist/index.js",
     "./package.json": "./package.json"
   },
-  "main": "./dist/index.mjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.mts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
     "echo-effect": "./bin/cli.js"
   },
@@ -30,8 +30,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "unbuild",
-    "dev": "unbuild --stub",
+    "build": "tsdown",
     "lint": "eslint",
     "prepublishOnly": "pnpm run build",
     "release": "bumpp",
@@ -55,9 +54,19 @@
   "dependencies": {
     "@antfu/install-pkg": "catalog:",
     "@clack/prompts": "catalog:",
+    "chalk": "catalog:madge",
+    "commander": "catalog:madge",
+    "commondir": "catalog:madge",
     "consola": "catalog:cli",
+    "debug": "catalog:madge",
     "local-pkg": "catalog:",
-    "madge": "catalog:"
+    "ora": "catalog:madge",
+    "pluralize": "catalog:madge",
+    "pretty-ms": "catalog:madge",
+    "rc": "catalog:madge",
+    "stream-to-array": "catalog:madge",
+    "ts-graphviz": "catalog:madge",
+    "walkdir": "catalog:madge"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:cli",
@@ -69,11 +78,12 @@
     "dependency-tree": "catalog:",
     "eslint": "catalog:cli",
     "lint-staged": "catalog:cli",
+    "madge": "catalog:",
     "simple-git-hooks": "catalog:cli",
     "tinyexec": "catalog:utils",
+    "tsdown": "catalog:cli",
     "tsx": "catalog:cli",
     "typescript": "catalog:cli",
-    "unbuild": "catalog:cli",
     "vite": "catalog:cli",
     "vitest": "catalog:testing"
   },
