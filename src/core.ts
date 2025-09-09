@@ -1,24 +1,68 @@
-import type { MadgeConfig, MadgeInstance } from 'madge';
+import type { ICruiseOptions } from 'dependency-cruiser';
 import type { ComponentResolver, EffectReport, ReverseDependencyGraph } from './types';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import madge from 'madge';
+import { cruise } from 'dependency-cruiser';
+import extractTSConfig from 'dependency-cruiser/config-utl/extract-ts-config';
+import { createMatchPath } from 'tsconfig-paths';
 import { ensurePackages } from './utils';
 import { createComponentResolver, isNuxtProject, isVue, parseVueTemplateForComponents } from './vue';
 
+function ensureFileExtension(filePath: string, extensions: string[]): string {
+  // 如果路径已经有扩展名，直接返回
+  if (path.extname(filePath)) {
+    return filePath;
+  }
+
+  // 检查文件是否存在，如果存在就返回带扩展名的路径
+  for (const ext of extensions) {
+    const fullPath = path.resolve(process.cwd(), filePath + ext);
+    if (fs.existsSync(fullPath)) {
+      return filePath + ext;
+    }
+  }
+
+  // 检查是否是目录，如果是目录，检查是否存在 index 文件
+  const dirPath = path.resolve(process.cwd(), filePath);
+  if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+    for (const ext of extensions) {
+      const indexFile = path.join(dirPath, `index${ext}`);
+      if (fs.existsSync(indexFile)) {
+        return path.join(filePath, `index${ext}`);
+      }
+    }
+  }
+
+  // 如果找不到文件，返回原始路径（让后续处理处理错误）
+  return filePath;
+}
+
 export function getStagedFiles(): Set<string> {
-  const gitOutput = execSync('git diff --name-only --cached --diff-filter=AM', {
-    encoding: 'utf-8',
-  });
+  try {
+    // 获取 Git 根目录
+    const gitRoot = execSync('git rev-parse --show-toplevel', {
+      encoding: 'utf-8',
+    }).trim();
 
-  const stagedFiles = gitOutput
-    .split('\n')
-    .filter(Boolean)
-    .map(file => path.resolve(process.cwd(), file));
+    // 获取暂存文件列表（相对于 Git 根目录）
+    const gitOutput = execSync('git diff --name-only --cached --diff-filter=AM', {
+      encoding: 'utf-8',
+      cwd: gitRoot,
+    });
 
-  return new Set(stagedFiles);
+    const stagedFiles = gitOutput
+      .split('\n')
+      .filter(Boolean)
+      .map(file => path.resolve(gitRoot, file));
+
+    return new Set(stagedFiles);
+  }
+  catch {
+    // 如果不是 Git 仓库或者没有暂存文件，返回空集合
+    return new Set();
+  }
 }
 
 export async function scanFile(
@@ -27,30 +71,62 @@ export async function scanFile(
   isNuxt: boolean = false,
   isRoot: boolean = true,
 ): Promise<Record<string, string[]>> {
-  const config: MadgeConfig = {
-    baseDir: process.cwd(),
-    fileExtensions: ['ts', 'tsx', 'js', 'jsx', 'vue', 'mjs', 'cjs'],
-    tsConfig: path.resolve(process.cwd(), 'tsconfig.json'),
-    includeNpm: false,
-    excludeRegExp: [
-      /^node_modules/,
-      /\.d\.ts$/,
-      /\.nuxt/,
-      /\.output/,
-      /\.cache/,
-      /dist/,
-    ],
+  const tsConfigPath = isNuxt && fs.existsSync(path.resolve(process.cwd(), '.nuxt/tsconfig.json'))
+    ? '.nuxt/tsconfig.json'
+    : 'tsconfig.json';
+  const tsConfig = extractTSConfig(tsConfigPath);
+
+  const cruiseOptions: ICruiseOptions = {
+    doNotFollow: 'node_modules',
+    maxDepth: 99,
+    tsConfig: { fileName: tsConfigPath },
+    tsPreCompilationDeps: true,
   };
 
-  if (isNuxt) {
-    const nuxtTsConfig = path.resolve(process.cwd(), '.nuxt/tsconfig.json');
-    if (fs.existsSync(nuxtTsConfig)) {
-      config.tsConfig = nuxtTsConfig;
-    }
+  const filesToCruise = Array.isArray(entryPath)
+    ? entryPath
+    : [entryPath];
+  const result = await cruise(filesToCruise, cruiseOptions, undefined, { tsConfig });
+
+  const resolveAlias = createMatchPath(tsConfig.options.baseUrl || './', tsConfig.options.paths ?? {});
+
+  const dependencyObject: Record<string, string[]> = {};
+
+  if (typeof result.output !== 'string') {
+    // console.log(JSON.stringify(result.output.modules));
+    result.output.modules.forEach((module) => {
+      if (module.source) {
+        const resolvedSource = ensureFileExtension(
+          resolveAlias(module.source) || module.source,
+          ['.ts', '.tsx', 'cjs', 'mjs', '.js', '.jsx', '.vue'],
+        );
+
+        const relativePath = path.relative(process.cwd(), resolvedSource);
+
+        if (relativePath.includes('node_modules') || !fs.existsSync(resolvedSource)) {
+          return;
+        }
+
+        dependencyObject[relativePath] = module.dependencies
+          .filter(dep => dep.resolved && !dep.resolved.includes('node_modules') && fs.existsSync(
+            ensureFileExtension(
+              resolveAlias(dep.resolved) || dep.resolved,
+              ['.ts', '.tsx', '.js', '.jsx', '.vue'],
+            ),
+          ))
+          .map((dep) => {
+            const resolvedDep = ensureFileExtension(
+              resolveAlias(dep.resolved) || dep.resolved,
+              ['.ts', '.tsx', '.js', '.jsx', '.vue'],
+            );
+            const depPath = path.relative(process.cwd(), resolvedDep);
+            return depPath;
+          });
+      }
+    });
   }
 
-  const instance: MadgeInstance = await madge(entryPath, config);
-  const dependencyObject = instance.obj();
+  // console.log(dependencyObject);
 
   if (isVue()) {
     if (isRoot) {
@@ -132,6 +208,8 @@ export async function buildReverseDependencyGraph(entryPath: string): Promise<Re
     }
   }
 
+  console.log(reverseGraph);
+
   return reverseGraph;
 }
 
@@ -142,7 +220,10 @@ export function calculateEffect(
   const effectReport: EffectReport = new Map();
   const queue: { file: string, level: number }[] = [];
 
+  // console.log(reverseGraph);
+
   modifiedFiles.forEach((file) => {
+    console.log('Modified file:', file, reverseGraph.has(file));
     if (reverseGraph.has(file)) {
       if (!effectReport.has(file)) {
         queue.push({ file, level: 0 });

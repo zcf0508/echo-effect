@@ -1,5 +1,5 @@
 #!/usr/bin/env node
 
-import { main } from '../dist/cli.cjs';
+import { main } from '../dist/cli.js';
 
 main();

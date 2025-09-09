@@ -25,7 +25,7 @@ export default defineConfig([
     entry: [
       'src/cli.ts',
     ],
-    format: ['cjs'],
+    format: ['esm'],
     platform: 'node',
     clean: true,
     dts: false,
