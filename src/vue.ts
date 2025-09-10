@@ -4,7 +4,7 @@ import fs, { existsSync } from 'node:fs';
 import path, { join } from 'node:path';
 import process from 'node:process';
 import { isPackageExists } from 'local-pkg';
-import { ensurePackages, interopDefault } from './utils';
+import { consola, ensurePackages, interopDefault } from './utils';
 
 // https://github.com/antfu/eslint-config/blob/v4.13.0/src/factory.ts#L50
 const VuePackages = ['vue', 'nuxt', 'vitepress', '@slidev/cli'];
@@ -124,7 +124,8 @@ export async function parseVueTemplateForComponents(
   )).parse(content);
 
   if (errors.length > 0) {
-    throw new Error(errors[0].message);
+    consola.debug(join(process.cwd(), filePath), errors[0].message);
+    return [];
   }
 
   if (!descriptor.template) {
