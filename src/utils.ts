@@ -1,5 +1,6 @@
 import type { ParsedCommandLine } from 'typescript';
 import type { Awaitable } from './types';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { consola as _consola } from 'consola';
@@ -104,4 +105,23 @@ export async function extractTSConfig(pTSConfigFileName: string): Promise<Parsed
   }
 
   return lReturnValue;
+}
+
+export function getTsconfigPath(isNuxt = false): string | undefined {
+  if (isNuxt) {
+    const tsconfigPath = resolve(process.cwd(), '.nuxt/tsconfig.json');
+    if (existsSync(tsconfigPath)) {
+      return tsconfigPath;
+    }
+  }
+  const tsconfigPath = resolve(process.cwd(), 'tsconfig.json');
+  if (existsSync(tsconfigPath)) {
+    return tsconfigPath;
+  }
+  else {
+    const tsconfigPath = resolve(process.cwd(), 'jsconfig.json');
+    if (existsSync(tsconfigPath)) {
+      return tsconfigPath;
+    }
+  }
 }

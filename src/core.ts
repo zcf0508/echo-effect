@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { cruise } from 'dependency-cruiser';
-import { ensurePackages, EXTENSIONS, extractTSConfig, interopDefault } from './utils';
+import { ensurePackages, EXTENSIONS, extractTSConfig, getTsconfigPath, interopDefault } from './utils';
 import { createComponentResolver, isNuxtProject, isVue, parseVueTemplateForComponents } from './vue';
 
 function ensureFileExtension(filePath: string, extensions: string[]): string {
@@ -69,11 +69,7 @@ export async function scanFile(
   isNuxt: boolean = false,
   isRoot: boolean = true,
 ): Promise<Record<string, string[]>> {
-  const tsConfigPath = isNuxt && fs.existsSync(path.resolve(process.cwd(), '.nuxt/tsconfig.json'))
-    ? path.resolve(process.cwd(), '.nuxt/tsconfig.json')
-    : path.resolve(process.cwd(), 'tsconfig.json');
-
-  const tsConfig = await extractTSConfig(tsConfigPath);
+  const tsConfigPath = getTsconfigPath(isNuxt);
 
   const cruiseOptions: ICruiseOptions = {
     doNotFollow: 'node_modules',
@@ -82,11 +78,15 @@ export async function scanFile(
     tsPreCompilationDeps: true,
   };
 
+  const tsConfig = tsConfigPath
+    ? await extractTSConfig(tsConfigPath)
+    : undefined;
+
   const result = await cruise(entryPath, cruiseOptions, undefined, { tsConfig }).catch(() => undefined);
 
   const resolveAlias = (await interopDefault(await import('tsconfig-paths'))).createMatchPath(
-    tsConfig.options?.baseUrl || path.join(process.cwd(), '.'),
-    tsConfig.options?.paths ?? {},
+    tsConfig?.options?.baseUrl || path.join(process.cwd(), '.'),
+    tsConfig?.options?.paths ?? {},
   );
 
   const dependencyObject: Record<string, string[]> = {};
