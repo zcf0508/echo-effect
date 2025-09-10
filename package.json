@@ -44,29 +44,28 @@
     "@clack/prompts": "catalog:",
     "@vue/compiler-dom": "catalog:",
     "@vue/compiler-sfc": "catalog:",
-    "chalk": "catalog:madge",
-    "commander": "catalog:madge",
-    "commondir": "catalog:madge",
+    "chalk": "catalog:",
+    "commander": "catalog:",
+    "commondir": "catalog:",
     "consola": "catalog:cli",
-    "debug": "catalog:madge",
+    "debug": "catalog:",
+    "dependency-cruiser": "catalog:",
     "local-pkg": "catalog:",
-    "ora": "catalog:madge",
-    "pluralize": "catalog:madge",
-    "pretty-ms": "catalog:madge",
-    "rc": "catalog:madge",
-    "stream-to-array": "catalog:madge",
-    "ts-graphviz": "catalog:madge",
-    "walkdir": "catalog:madge"
+    "ora": "catalog:",
+    "pluralize": "catalog:",
+    "pretty-ms": "catalog:",
+    "rc": "catalog:",
+    "stream-to-array": "catalog:",
+    "ts-graphviz": "catalog:",
+    "tsconfig-paths": "catalog:",
+    "walkdir": "catalog:"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:cli",
-    "@types/madge": "catalog:",
     "@types/node": "catalog:types",
     "bumpp": "catalog:cli",
-    "dependency-tree": "catalog:",
     "eslint": "catalog:cli",
     "lint-staged": "catalog:cli",
-    "madge": "catalog:",
     "simple-git-hooks": "catalog:cli",
     "tinyexec": "catalog:utils",
     "tsdown": "catalog:cli",
@@ -74,11 +73,6 @@
     "typescript": "catalog:cli",
     "vite": "catalog:cli",
     "vitest": "catalog:testing"
-  },
-  "pnpm": {
-    "patchedDependencies": {
-      "dependency-tree": "patches/dependency-tree.patch"
-    }
   },
   "simple-git-hooks": {
     "pre-commit": "pnpm i --frozen-lockfile --ignore-scripts --offline && npx lint-staged"

@@ -13,9 +13,9 @@ by mapping and analyzing dependency chains.
 ## Key Features
 
 *   **Git Staged File Analysis**: Focuses specifically on the changes you're about to commit.
-*   **Comprehensive Dependency Mapping**: Leverages `madge` to understand import/export relationships in:
+*   **Comprehensive Dependency Mapping**: Leverages `dependency-cruiser` to understand import/export relationships in:
     *   JavaScript (`.js`, `.jsx`)
-    *   TypeScript ([.ts](cci:7://file:///Users/zyb/Desktop/zcf0508/echo-effect/src/vue.ts:0:0-0:0), `.tsx`)
+    *   TypeScript (`.ts`, `.tsx`)
     *   Vue.js Single File Components (`.vue`)
     *   ES Modules (`.mjs`) and CommonJS (`.cjs`)
 *   **Advanced Vue.js & Nuxt.js Support**:
@@ -31,7 +31,7 @@ by mapping and analyzing dependency chains.
 
 1.  **Identifies Staged Files**: Runs `git diff --name-only --cached --diff-filter=AM`
 to get a list of added or modified files in your Git staging area.
-2.  **Builds Dependency Graph**: Scans your project from a specified entry point using `madge`
+2.  **Builds Dependency Graph**: Scans your project from a specified entry point using `dependency-cruiser`
 to map out all module dependencies.
 For Vue/Nuxt projects, it performs additional parsing for template components.
 3.  **Constructs Reverse Dependency Graph**: Inverts the dependency map to understand "who depends on whom."
@@ -44,7 +44,7 @@ to trace and report all affected files.
 Navigate to your project's root directory and run:
 
 ```bash
-npx -y echo-effect <path-to-your-project-entry-file>
+npx -y echo-effect <path-to-your-project-entry-folder>
 ```
 
 For example:
@@ -59,6 +59,23 @@ npx -y echo-effect src/main.ts
 - Focused Code Reviews: Helps reviewers concentrate on the most critical areas affected by a change.
 - Enhanced Codebase Understanding: Provides insights into the interconnectedness of your project's modules.
 - Safer Refactoring: Make larger changes with more confidence by seeing their downstream effects.
+
+## Testing
+
+The project includes comprehensive test coverage for the core `scanFile` functionality:
+
+### Test Categories
+- **Basic Functionality**: Single file scanning, multiple file scanning, file extension handling
+- **Edge Cases**: Non-existent files, empty dependencies, node_modules filtering
+- **Vue Component Parsing**: SFC component resolution, duplicate component handling
+- **Path Handling**: TypeScript path alias resolution, relative path processing
+
+### Running Tests
+```bash
+npm test
+```
+
+Tests use Vitest with proper mocking of file system operations and external dependencies.
 
 ## License
 
