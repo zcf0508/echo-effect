@@ -6,8 +6,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { cruise } from 'dependency-cruiser';
 import extractTSConfig from 'dependency-cruiser/config-utl/extract-ts-config';
-import { createMatchPath } from 'tsconfig-paths';
-import { ensurePackages } from './utils';
+import { ensurePackages, EXTENSIONS, interopDefault } from './utils';
 import { createComponentResolver, isNuxtProject, isVue, parseVueTemplateForComponents } from './vue';
 
 function ensureFileExtension(filePath: string, extensions: string[]): string {
@@ -66,14 +65,15 @@ export function getStagedFiles(): Set<string> {
 }
 
 export async function scanFile(
-  entryPath: string | string[],
+  entryPath: string[],
   resolveComponent: ComponentResolver,
   isNuxt: boolean = false,
   isRoot: boolean = true,
 ): Promise<Record<string, string[]>> {
   const tsConfigPath = isNuxt && fs.existsSync(path.resolve(process.cwd(), '.nuxt/tsconfig.json'))
-    ? '.nuxt/tsconfig.json'
-    : 'tsconfig.json';
+    ? path.resolve(process.cwd(), '.nuxt/tsconfig.json')
+    : path.resolve(process.cwd(), 'tsconfig.json');
+
   const tsConfig = extractTSConfig(tsConfigPath);
 
   const cruiseOptions: ICruiseOptions = {
@@ -83,22 +83,26 @@ export async function scanFile(
     tsPreCompilationDeps: true,
   };
 
-  const filesToCruise = Array.isArray(entryPath)
-    ? entryPath
-    : [entryPath];
-  const result = await cruise(filesToCruise, cruiseOptions, undefined, { tsConfig });
+  const result = await cruise(entryPath, cruiseOptions, undefined, { tsConfig }).catch(() => undefined);
 
-  const resolveAlias = createMatchPath(tsConfig.options.baseUrl || './', tsConfig.options.paths ?? {});
+  const resolveAlias = (await interopDefault(await import('tsconfig-paths'))).createMatchPath(
+    tsConfig.options.baseUrl || path.join(process.cwd(), '.'),
+    tsConfig.options.paths ?? {},
+  );
 
   const dependencyObject: Record<string, string[]> = {};
 
-  if (typeof result.output !== 'string') {
-    // console.log(JSON.stringify(result.output.modules));
+  if (result?.output && typeof result?.output !== 'string') {
     result.output.modules.forEach((module) => {
       if (module.source) {
         const resolvedSource = ensureFileExtension(
-          resolveAlias(module.source) || module.source,
-          ['.ts', '.tsx', 'cjs', 'mjs', '.js', '.jsx', '.vue'],
+          resolveAlias(
+            module.source,
+            undefined,
+            undefined,
+            EXTENSIONS,
+          ) || module.source,
+          EXTENSIONS,
         );
 
         const relativePath = path.relative(process.cwd(), resolvedSource);
@@ -107,26 +111,24 @@ export async function scanFile(
           return;
         }
 
-        dependencyObject[relativePath] = module.dependencies
-          .filter(dep => dep.resolved && !dep.resolved.includes('node_modules') && fs.existsSync(
-            ensureFileExtension(
-              resolveAlias(dep.resolved) || dep.resolved,
-              ['.ts', '.tsx', '.js', '.jsx', '.vue'],
-            ),
-          ))
-          .map((dep) => {
-            const resolvedDep = ensureFileExtension(
-              resolveAlias(dep.resolved) || dep.resolved,
-              ['.ts', '.tsx', '.js', '.jsx', '.vue'],
-            );
-            const depPath = path.relative(process.cwd(), resolvedDep);
-            return depPath;
-          });
+        dependencyObject[relativePath] = [
+          ...(dependencyObject[relativePath] ?? []),
+          ...module.dependencies
+            .filter((dep) => {
+              return dep.resolved && !dep.resolved.includes('node_modules');
+            })
+            .map((dep) => {
+              const resolvedDep = ensureFileExtension(
+                resolveAlias(dep.resolved, undefined, undefined, EXTENSIONS) || dep.resolved,
+                EXTENSIONS,
+              );
+              const depPath = path.relative(process.cwd(), resolvedDep);
+              return depPath;
+            }),
+        ];
       }
     });
   }
-
-  // console.log(dependencyObject);
 
   if (isVue()) {
     if (isRoot) {
@@ -142,12 +144,11 @@ export async function scanFile(
 
         await Promise.all(
           vueFiles.map(async (file) => {
-            const components = (await parseVueTemplateForComponents(file, resolveComponent)).map(
-              compPath => compPath.replace(process.cwd(), '').slice(1),
-            );
+            const components = (await parseVueTemplateForComponents(file, resolveComponent));
 
             if (dependencyObject[file]) {
               components.forEach((compPath) => {
+                compPath = path.relative(process.cwd(), compPath);
                 if (!dependencyObject[file].includes(compPath)) {
                   dependencyObject[file].push(compPath);
                   newLinkedComponents.add(compPath);
@@ -189,7 +190,7 @@ export async function buildReverseDependencyGraph(entryPath: string): Promise<Re
 
   const resolveComponent = createComponentResolver();
 
-  const dependencyObject = await scanFile(entryPath, resolveComponent, isNuxt);
+  const dependencyObject = await scanFile([entryPath], resolveComponent, isNuxt);
 
   const reverseGraph: ReverseDependencyGraph = new Map();
 
@@ -208,8 +209,6 @@ export async function buildReverseDependencyGraph(entryPath: string): Promise<Re
     }
   }
 
-  console.log(reverseGraph);
-
   return reverseGraph;
 }
 
@@ -220,10 +219,7 @@ export function calculateEffect(
   const effectReport: EffectReport = new Map();
   const queue: { file: string, level: number }[] = [];
 
-  // console.log(reverseGraph);
-
   modifiedFiles.forEach((file) => {
-    console.log('Modified file:', file, reverseGraph.has(file));
     if (reverseGraph.has(file)) {
       if (!effectReport.has(file)) {
         queue.push({ file, level: 0 });

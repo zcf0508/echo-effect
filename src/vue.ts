@@ -1,7 +1,7 @@
 import type { TemplateChildNode } from '@vue/compiler-dom';
 import type { ComponentResolver } from './types';
-import fs from 'node:fs';
-import path from 'node:path';
+import fs, { existsSync } from 'node:fs';
+import path, { join } from 'node:path';
 import process from 'node:process';
 import { isPackageExists } from 'local-pkg';
 import { ensurePackages, interopDefault } from './utils';
@@ -109,6 +109,7 @@ export function createComponentResolver(): ComponentResolver {
 }
 
 export async function parseVueTemplateForComponents(
+  /** relation path */
   filePath: string,
   componentResolver: ComponentResolver,
 ): Promise<string[]> {
@@ -116,7 +117,7 @@ export async function parseVueTemplateForComponents(
     return [];
   }
 
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const content = fs.readFileSync(join(process.cwd(), filePath), 'utf-8');
 
   const { descriptor, errors } = (await interopDefault(
     import('@vue/compiler-sfc'),
@@ -159,5 +160,5 @@ export async function parseVueTemplateForComponents(
     }
   });
 
-  return resolvedPaths;
+  return resolvedPaths.filter(fs.existsSync);
 }

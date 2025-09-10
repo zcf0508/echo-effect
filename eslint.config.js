@@ -8,6 +8,9 @@ export default antfu(
   },
   [
     {
+      ignores: ['test/fixtures/**/*'],
+    },
+    {
       rules: {
         'curly': ['error', 'all'],
         'style/brace-style': 'error',

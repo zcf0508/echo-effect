@@ -44,3 +44,5 @@ export async function ensurePackages(packages: (string | undefined)[]): Promise<
     ));
   }
 }
+
+export const EXTENSIONS = ['.ts', '.tsx', 'cjs', 'mjs', '.js', '.jsx', '.vue'];
