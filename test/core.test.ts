@@ -2,6 +2,7 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { scanFile } from '../src/core';
 import * as vueModule from '../src/vue';
+import { normalizeDependencyPaths } from './test-utils';
 
 const mockCwd = vi.hoisted(() => vi.fn());
 
@@ -41,7 +42,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/components/Button.ts": [
             "src/utils/math.ts",
@@ -71,7 +72,7 @@ describe('scanFile', () => {
 
       const result = await scanFile(files, mockResolveComponent);
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/components/Header.ts": [],
           "src/main.ts": [
@@ -93,7 +94,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/components/Button.ts": [
             "src/utils/math.ts",
@@ -123,7 +124,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot('{}');
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot('{}');
 
       mockCwd.mockReset();
     });
@@ -135,7 +136,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/no-deps.ts": [],
         }
@@ -153,7 +154,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/components/Button.ts": [
             "src/utils/math.ts",
@@ -190,7 +191,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/App.vue": [
             "src/RegularComponent.vue",
@@ -223,7 +224,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/App.vue": [
             "src/RegularComponent.vue",
@@ -255,7 +256,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/components/Button.ts": [
             "src/utils/math.ts",
@@ -282,7 +283,7 @@ describe('scanFile', () => {
         mockResolveComponent,
       );
 
-      expect(result).toMatchInlineSnapshot(`
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
           "src/components/Button.ts": [
             "src/utils/math.ts",
