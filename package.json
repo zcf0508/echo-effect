@@ -58,6 +58,7 @@
     "stream-to-array": "catalog:",
     "ts-graphviz": "catalog:",
     "tsconfig-paths": "catalog:",
+    "typescript": "catalog:cli",
     "walkdir": "catalog:"
   },
   "devDependencies": {
@@ -70,7 +71,6 @@
     "tinyexec": "catalog:utils",
     "tsdown": "catalog:cli",
     "tsx": "catalog:cli",
-    "typescript": "catalog:cli",
     "vite": "catalog:cli",
     "vitest": "catalog:testing"
   },

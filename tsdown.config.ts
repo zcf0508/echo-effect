@@ -9,7 +9,6 @@ export default defineConfig([
     platform: 'node',
     clean: true,
     dts: false,
-    external: ['typescript'],
   },
   {
     entry: [
@@ -18,6 +17,5 @@ export default defineConfig([
     platform: 'node',
     clean: true,
     dts: true,
-    external: ['typescript'],
   },
 ]);
