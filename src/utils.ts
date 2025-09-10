@@ -1,4 +1,6 @@
+import type { ParsedCommandLine } from 'typescript';
 import type { Awaitable } from './types';
+import { dirname, resolve } from 'node:path';
 import process from 'node:process';
 import { consola as _consola } from 'consola';
 import { isPackageExists } from 'local-pkg';
@@ -46,3 +48,60 @@ export async function ensurePackages(packages: (string | undefined)[]): Promise<
 }
 
 export const EXTENSIONS = ['.ts', '.tsx', 'cjs', 'mjs', '.js', '.jsx', '.vue'];
+
+export async function extractTSConfig(pTSConfigFileName: string): Promise<ParsedCommandLine> {
+  let lReturnValue = {} as ParsedCommandLine;
+
+  const typescript = await interopDefault(await import('typescript'));
+
+  if (typescript) {
+    const FORMAT_DIAGNOSTICS_HOST = {
+      getCanonicalFileName(pFileName: string) {
+        let lReturnValue = pFileName.toLowerCase();
+
+        // depends on the platform which branch is taken, hence the c8 ignore
+        /* c8 ignore start */
+        if (typescript?.sys?.useCaseSensitiveFileNames ?? false) {
+          lReturnValue = pFileName;
+        }
+        /* c8 ignore stop */
+        return lReturnValue;
+      },
+      getCurrentDirectory() {
+        return process.cwd();
+      },
+      getNewLine() {
+        return '\n';
+      },
+    };
+
+    const lConfig = typescript.readConfigFile(
+      pTSConfigFileName,
+      typescript.sys.readFile,
+    );
+
+    if (typeof lConfig.error !== 'undefined') {
+      throw new TypeError(
+        typescript.formatDiagnostics([lConfig.error], FORMAT_DIAGNOSTICS_HOST),
+      );
+    }
+    lReturnValue = typescript.parseJsonConfigFileContent(
+      lConfig.config,
+      typescript.sys,
+      dirname(resolve(pTSConfigFileName)),
+      {},
+      pTSConfigFileName,
+    );
+
+    if (lReturnValue.errors.length > 0) {
+      throw new Error(
+        typescript.formatDiagnostics(
+          lReturnValue.errors,
+          FORMAT_DIAGNOSTICS_HOST,
+        ),
+      );
+    }
+  }
+
+  return lReturnValue;
+}
