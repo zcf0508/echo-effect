@@ -48,8 +48,29 @@ function printReport(report: EffectReport): void {
   consola.success('\n--- Report End ---');
 }
 
+function printReportJSON(report: EffectReport): void {
+  const filesByLevel: Record<number, string[]> = {};
+  const relativeRoot = process.cwd();
+
+  report.forEach(({ level }, file) => {
+    if (!filesByLevel[level]) {
+      filesByLevel[level] = [];
+    }
+    filesByLevel[level].push(path.relative(relativeRoot, file));
+  });
+
+  if (Object.keys(filesByLevel).length === 1 && filesByLevel[0]?.length > 0) {
+    return;
+  }
+
+  console.log(JSON.stringify(filesByLevel));
+}
+
 export async function main(): Promise<void> {
-  const entryArg = process.argv[2];
+  const args = process.argv.slice(2);
+  const jsonOutput = args.includes('--json');
+  const entryArg = args.find(arg => !arg.startsWith('--'));
+
   if (!entryArg) {
     consola.error('Error: Please provide a project entry file or directory as an argument.');
     process.exit(1);
@@ -70,7 +91,13 @@ export async function main(): Promise<void> {
 
     const reverseGraph = await buildReverseDependencyGraph(entryPath);
     const report = calculateEffect(stagedFiles, reverseGraph);
-    printReport(report);
+
+    if (jsonOutput) {
+      printReportJSON(report);
+    }
+    else {
+      printReport(report);
+    }
   }
   catch (error) {
     consola.error('\n❌ Analysis error:', error);
