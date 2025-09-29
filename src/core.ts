@@ -143,7 +143,12 @@ export async function scanFile(
 
         await Promise.all(
           vueFiles.map(async (file) => {
-            const components = (await parseVueTemplateForComponents(file, resolveComponent));
+            const components = (await parseVueTemplateForComponents(file, resolveComponent).catch(
+              () => {
+                console.log(`Warning: Failed to parse Vue file: ${file}`);
+                return [] as string[];
+              },
+            ));
 
             if (dependencyObject[file]) {
               components.forEach((compPath) => {
