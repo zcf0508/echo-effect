@@ -1,7 +1,7 @@
 {
   "name": "echo-effect",
   "type": "module",
-  "version": "0.0.11",
+  "version": "0.0.12",
   "packageManager": "pnpm@9.15.9",
   "description": "`EchoEffect` is a powerful dependency impact analysis tool designed for the entire frontend ecosystem. It helps developers understand the ripple effects of code changes across their projects by mapping and analyzing dependency chains.",
   "author": "huali <zcf0508@live.com>",
