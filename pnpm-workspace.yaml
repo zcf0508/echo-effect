@@ -12,7 +12,7 @@ catalog:
   commander: ^7.2.0
   commondir: ^1.0.1
   debug: ^4.3.4
-  dependency-cruiser: ^17.0.1
+  dependency-cruiser: ^17.1.0
   local-pkg: ^1.1.1
   ora: ^5.4.1
   pluralize: ^8.0.0
