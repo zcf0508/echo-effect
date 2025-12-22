@@ -5,8 +5,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { cruise } from 'dependency-cruiser';
-import { ensurePackages, EXTENSIONS, extractTSConfig, getTsconfigPath, interopDefault } from './utils';
-import { createComponentResolver, isNuxtProject, isVue, parseVueTemplateForComponents } from './vue';
+import { createAutoImportResolverFn } from './resolvers';
+import {
+  ensurePackages,
+  EXTENSIONS,
+  extractTSConfig,
+  getTsconfigPath,
+  interopDefault,
+} from './utils';
+import {
+  createComponentResolver,
+  isNuxtProject,
+  isVue,
+  parseVueScriptForImports,
+  parseVueTemplateForComponents,
+} from './vue';
 
 function ensureFileExtension(filePath: string, extensions: string[]): string {
   // 如果路径已经有扩展名，直接返回
@@ -91,6 +104,16 @@ export async function scanFile(
 
   const dependencyObject: Record<string, string[]> = {};
 
+  const addDependency = (file: string, dep: string, components?: Set<string>): void => {
+    if (dep !== file && !dependencyObject[file]?.includes(dep)) {
+      if (!dependencyObject[file]) {
+        dependencyObject[file] = [];
+      }
+      dependencyObject[file].push(dep);
+      components?.add(dep);
+    }
+  };
+
   if (result?.output && typeof result?.output !== 'string') {
     result.output.modules.forEach((module) => {
       if (module.source) {
@@ -110,21 +133,22 @@ export async function scanFile(
           return;
         }
 
-        dependencyObject[relativePath] = [
-          ...(dependencyObject[relativePath] ?? []),
-          ...module.dependencies
-            .filter((dep) => {
-              return dep.resolved && !dep.resolved.includes('node_modules');
-            })
-            .map((dep) => {
-              const resolvedDep = ensureFileExtension(
-                resolveAlias(dep.resolved, undefined, undefined, EXTENSIONS) || dep.resolved,
-                EXTENSIONS,
-              );
-              const depPath = path.relative(process.cwd(), resolvedDep);
-              return depPath;
-            }),
-        ];
+        if (!dependencyObject[relativePath]) {
+          dependencyObject[relativePath] = [];
+        }
+
+        module.dependencies
+          .filter((dep) => {
+            return dep.resolved && !dep.resolved.includes('node_modules');
+          })
+          .forEach((dep) => {
+            const resolvedDep = ensureFileExtension(
+              resolveAlias(dep.resolved, undefined, undefined, EXTENSIONS) || dep.resolved,
+              EXTENSIONS,
+            );
+            const depPath = path.relative(process.cwd(), resolvedDep);
+            addDependency(relativePath, depPath);
+          });
       }
     });
   }
@@ -136,57 +160,104 @@ export async function scanFile(
     }
 
     const newLinkedComponents = new Set<string>();
+    const autoImportResolver = createAutoImportResolverFn();
 
-    await Promise.all(
-      Object.entries(dependencyObject).map(async ([_, dependencies]) => {
-        const vueFiles = Array.from(new Set(dependencies.flat())).filter(file => file.endsWith('.vue'));
+    // 1. Collect all files to scan (keys and dependencies)
+    const filesToScan = new Set<string>();
+    Object.entries(dependencyObject).forEach(([file, deps]) => {
+      filesToScan.add(file);
+      deps.forEach(dep => filesToScan.add(dep));
+    });
 
-        await Promise.all(
-          vueFiles.map(async (file) => {
-            const components = (await parseVueTemplateForComponents(file, resolveComponent).catch(
-              () => {
-                console.log(`Warning: Failed to parse Vue file: ${file}`);
-                return [] as string[];
-              },
-            ));
+    // 2. Scan for auto-imports and Vue components/imports in all identified files
+    await Promise.all(Array.from(filesToScan).map(async (file) => {
+      const filePath = path.resolve(process.cwd(), file);
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        return;
+      }
 
-            if (dependencyObject[file]) {
-              components.forEach((compPath) => {
-                compPath = path.relative(process.cwd(), compPath);
-                if (!dependencyObject[file].includes(compPath)) {
-                  dependencyObject[file].push(compPath);
-                  newLinkedComponents.add(compPath);
-                }
-              });
-            }
-            else {
-              dependencyObject[file] = components;
-            }
-          }),
-        );
-      }),
-    );
+      const content = fs.readFileSync(filePath, 'utf-8');
 
-    if (newLinkedComponents.size && isRoot) {
-      const newDependencyObject = await scanFile(
-        Array.from(newLinkedComponents),
-        resolveComponent,
-        isNuxt,
-        false,
-      );
+      // Auto-import scanning
+      // Strip comments and strings to avoid false positives
+      const cleanContent = content
+        .replace(/\/\/.*$/gm, '') // single line comments
+        .replace(/\/\*[\s\S]*?\*\//g, '') // multi-line comments
+        .replace(/(['"])(?:(?!\1)[^\\]|\\.)*?\1/g, '') // single/double quoted strings
+        .replace(/`[\s\S]*?`/g, ''); // template literals (simplified)
 
-      Object.entries(newDependencyObject).forEach(([file, dependencies]) => {
-        if (!dependencyObject[file]) {
-          dependencyObject[file] = dependencies;
-        }
-        else {
-          dependencyObject[file] = [...new Set([...dependencyObject[file], ...dependencies])];
+      const identifiers = cleanContent.match(/\b(\w+)\b/g) || [];
+      const uniqueIdentifiers = [...new Set(identifiers)];
+
+      uniqueIdentifiers.forEach((id) => {
+        const resolved = autoImportResolver(id);
+        if (resolved) {
+          const resolvedWithExt = ensureFileExtension(resolved, EXTENSIONS);
+          const relPath = path.relative(process.cwd(), resolvedWithExt);
+          addDependency(file, relPath, newLinkedComponents);
         }
       });
+
+      // Vue specific scanning
+      if (file.endsWith('.vue')) {
+        // 1. Template components
+        const components = await parseVueTemplateForComponents(file, resolveComponent).catch(() => []);
+        components.forEach((compPath) => {
+          const relCompPath = path.relative(process.cwd(), compPath);
+          addDependency(file, relCompPath, newLinkedComponents);
+        });
+
+        // 2. Script imports (fallback for dependency-cruiser)
+        const scriptImports = await parseVueScriptForImports(file).catch(() => []);
+        scriptImports.forEach((importSpecifier) => {
+          let resolvedImport = resolveAlias(importSpecifier, undefined, undefined, EXTENSIONS) || importSpecifier;
+
+          // If relative import, resolve it based on current file
+          if (resolvedImport.startsWith('.')) {
+            resolvedImport = path.resolve(path.dirname(filePath), resolvedImport);
+          }
+
+          const resolvedWithExt = ensureFileExtension(resolvedImport, EXTENSIONS);
+          const relImportPath = path.relative(process.cwd(), resolvedWithExt);
+
+          if (!relImportPath.includes('node_modules') && fs.existsSync(path.resolve(process.cwd(), relImportPath))) {
+            addDependency(file, relImportPath, newLinkedComponents);
+          }
+        });
+      }
+    }));
+
+    if (newLinkedComponents.size) {
+      // Find components that are not in dependencyObject keys yet
+      const unvisitedComponents = Array.from(newLinkedComponents).filter(c => !dependencyObject[c]);
+
+      if (unvisitedComponents.length > 0) {
+        const newDependencyObject = await scanFile(
+          unvisitedComponents.map(p => path.resolve(process.cwd(), p)),
+          resolveComponent,
+          isNuxt,
+          false,
+        );
+
+        Object.entries(newDependencyObject).forEach(([file, dependencies]) => {
+          if (!dependencyObject[file]) {
+            dependencyObject[file] = dependencies;
+          }
+          else {
+            dependencyObject[file] = [...new Set([...dependencyObject[file], ...dependencies])];
+          }
+        });
+      }
     }
   }
 
-  return dependencyObject;
+  // Sort dependencies for consistent output
+  const sortedDependencyObject: Record<string, string[]> = {};
+  Object.keys(dependencyObject).sort().forEach((key) => {
+    sortedDependencyObject[key] = [...new Set(dependencyObject[key])].sort();
+  });
+
+  return sortedDependencyObject;
 }
 
 export async function buildReverseDependencyGraph(entryPath: string): Promise<ReverseDependencyGraph> {

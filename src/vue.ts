@@ -1,10 +1,12 @@
 import type { TemplateChildNode } from '@vue/compiler-dom';
+import type { Node } from 'typescript';
 import type { ComponentResolver } from './types';
-import fs, { existsSync } from 'node:fs';
+import fs from 'node:fs';
 import path, { join } from 'node:path';
 import process from 'node:process';
 import { isPackageExists } from 'local-pkg';
-import { consola, ensurePackages, interopDefault } from './utils';
+import { getAutoImportFiles } from './resolvers';
+import { consola, interopDefault } from './utils';
 
 // https://github.com/antfu/eslint-config/blob/v4.13.0/src/factory.ts#L50
 const VuePackages = ['vue', 'nuxt', 'vitepress', '@slidev/cli'];
@@ -30,82 +32,6 @@ export const NUXT_AUTO_IMPORTS = [
 export function isNuxtProject(): boolean {
   return fs.existsSync(path.resolve(process.cwd(), 'nuxt.config.ts'))
     || fs.existsSync(path.resolve(process.cwd(), 'nuxt.config.js'));
-}
-
-function getAutoImportFiles(): string[] {
-  const possiblePaths = [
-    '.nuxt/auto-imports.d.ts',
-    '.nuxt/components.d.ts',
-    'auto-imports.d.ts',
-    'components.d.ts',
-    'src/auto-imports.d.ts',
-    'src/components.d.ts',
-  ];
-
-  return possiblePaths
-    .map(p => path.resolve(process.cwd(), p))
-    .filter(fs.existsSync);
-}
-
-function extractAutoImports(filePath: string): string[] {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const imports: string[] = [];
-
-  const globalDeclarations = content.match(/declare\s+(const|function)\s+(\w+)/g) || [];
-  globalDeclarations.forEach((decl) => {
-    const name = decl.split(/\s+/)[2];
-    if (name) {
-      imports.push(name);
-    }
-  });
-
-  return [...new Set(imports)];
-}
-
-function parseComponentsDTS(filePath: string): Map<string, string> {
-  const content = fs.readFileSync(filePath, 'utf-8');
-  const componentMap = new Map<string, string>();
-
-  const componentRegex = /(\w+):\s*typeof\s+import\('([^']+)'\)\['default'\]/g;
-  let match: RegExpExecArray | null;
-
-  // eslint-disable-next-line no-cond-assign
-  while ((match = componentRegex.exec(content)) !== null) {
-    const componentName = match[1];
-    const importPath = match[2];
-
-    const absolutePath = path.resolve(path.dirname(filePath), importPath);
-    componentMap.set(componentName, absolutePath);
-
-    const kebabName = componentName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
-    componentMap.set(kebabName, absolutePath);
-  }
-
-  return componentMap;
-}
-
-export function createComponentResolver(): ComponentResolver {
-  const componentMaps: Map<string, string>[] = [];
-
-  const componentFiles = getAutoImportFiles().filter(f =>
-    f.endsWith('components.d.ts'),
-  );
-
-  componentFiles.forEach((file) => {
-    const map = parseComponentsDTS(file);
-    if (map.size > 0) {
-      componentMaps.push(map);
-    }
-  });
-
-  return (name: string) => {
-    for (const map of componentMaps) {
-      if (map.has(name)) {
-        return map.get(name)!;
-      }
-    }
-    return null;
-  };
 }
 
 export async function parseVueTemplateForComponents(
@@ -162,4 +88,93 @@ export async function parseVueTemplateForComponents(
   });
 
   return resolvedPaths.filter(fs.existsSync);
+}
+
+export function parseComponentsDTS(filePath: string): Map<string, string> {
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const componentMap = new Map<string, string>();
+
+  const componentRegex = /(\w+):\s*typeof\s+import\('([^']+)'\)\['default'\]/g;
+  let match: RegExpExecArray | null;
+
+  // eslint-disable-next-line no-cond-assign
+  while ((match = componentRegex.exec(content)) !== null) {
+    const componentName = match[1];
+    const importPath = match[2];
+
+    const absolutePath = path.resolve(path.dirname(filePath), importPath);
+    componentMap.set(componentName, absolutePath);
+
+    const kebabName = componentName.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+    componentMap.set(kebabName, absolutePath);
+  }
+
+  return componentMap;
+}
+
+export function createComponentResolver(): ComponentResolver {
+  const componentMaps: Map<string, string>[] = [];
+
+  const componentFiles = getAutoImportFiles().filter(f =>
+    f.endsWith('components.d.ts'),
+  );
+
+  componentFiles.forEach((file) => {
+    const map = parseComponentsDTS(file);
+    if (map.size > 0) {
+      componentMaps.push(map);
+    }
+  });
+
+  return (name: string) => {
+    for (const map of componentMaps) {
+      if (map.has(name)) {
+        return map.get(name)!;
+      }
+    }
+    return null;
+  };
+}
+
+export async function parseVueScriptForImports(
+  filePath: string,
+): Promise<string[]> {
+  if (!filePath.endsWith('.vue')) {
+    return [];
+  }
+
+  const content = fs.readFileSync(join(process.cwd(), filePath), 'utf-8');
+
+  const { descriptor } = (await interopDefault(
+    import('@vue/compiler-sfc'),
+  )).parse(content);
+
+  const scriptContent = `${descriptor.script?.content || ''}\n${descriptor.scriptSetup?.content || ''}`;
+
+  if (!scriptContent.trim()) {
+    return [];
+  }
+
+  const ts = await interopDefault(import('typescript'));
+  const sourceFile = ts.createSourceFile(
+    filePath,
+    scriptContent,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+
+  const imports: string[] = [];
+
+  const visit = (node: Node): void => {
+    if (ts.isImportDeclaration(node)) {
+      if (node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        imports.push(node.moduleSpecifier.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(sourceFile);
+
+  return imports;
 }

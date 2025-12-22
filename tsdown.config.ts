@@ -5,7 +5,7 @@ export default defineConfig([
     entry: [
       'src/cli.ts',
     ],
-    format: ['esm'],
+    format: ['cjs'],
     platform: 'node',
     clean: true,
     dts: false,
@@ -14,6 +14,7 @@ export default defineConfig([
     entry: [
       'src/index.ts',
     ],
+    format: ['cjs', 'esm'],
     platform: 'node',
     clean: true,
     dts: true,

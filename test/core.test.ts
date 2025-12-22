@@ -1,8 +1,21 @@
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { scanFile } from '../src/core';
+import * as resolversModule from '../src/resolvers';
 import * as vueModule from '../src/vue';
 import { normalizeDependencyPaths } from './test-utils';
+
+vi.mock('local-pkg', () => ({
+  isPackageExists: vi.fn(pkg => pkg === 'vue'),
+}));
+
+vi.mock('../src/utils', async (importOriginal) => {
+  const actual = await importOriginal() as any;
+  return {
+    ...actual,
+    ensurePackages: vi.fn(),
+  };
+});
 
 const mockCwd = vi.hoisted(() => vi.fn());
 
@@ -15,15 +28,6 @@ vi.mock('node:process', async (importOriginal) => {
       ...actual,
       cwd: mockCwd,
     },
-  };
-});
-
-vi.mock('../src/vue.ts', async (importOriginal) => {
-  const actual = await importOriginal() as object;
-  return {
-    ...actual,
-    isVue: vi.fn(() => false),
-    isNuxtProject: vi.fn(() => false),
   };
 });
 
@@ -51,8 +55,8 @@ describe('scanFile', () => {
             "src/components/Button.ts",
           ],
           "src/main.ts": [
-            "src/utils/math.ts",
             "src/components/Header.ts",
+            "src/utils/math.ts",
           ],
           "src/no-deps.ts": [],
           "src/utils/math.ts": [],
@@ -76,8 +80,8 @@ describe('scanFile', () => {
         {
           "src/components/Header.ts": [],
           "src/main.ts": [
-            "src/utils/math.ts",
             "src/components/Header.ts",
+            "src/utils/math.ts",
           ],
           "src/utils/math.ts": [],
         }
@@ -103,8 +107,8 @@ describe('scanFile', () => {
             "src/components/Button.ts",
           ],
           "src/main.ts": [
-            "src/utils/math.ts",
             "src/components/Header.ts",
+            "src/utils/math.ts",
           ],
           "src/no-deps.ts": [],
           "src/utils/math.ts": [],
@@ -163,8 +167,8 @@ describe('scanFile', () => {
             "src/components/Button.ts",
           ],
           "src/main.ts": [
-            "src/utils/math.ts",
             "src/components/Header.ts",
+            "src/utils/math.ts",
           ],
           "src/no-deps.ts": [],
           "src/utils/math.ts": [],
@@ -182,13 +186,11 @@ describe('scanFile', () => {
 
   describe('vue 组件测试', () => {
     it('vue SFC 组件解析测试', async () => {
-      mockCwd.mockImplementation(() => path.join(__dirname, './fixtures/vue-project'));
-      mockResolveComponent.mockImplementation(vueModule.createComponentResolver());
-      vi.mocked(vueModule.isVue).mockReturnValueOnce(true);
-
+      const projectRoot = path.join(__dirname, './fixtures/vue-project');
+      mockCwd.mockImplementation(() => projectRoot);
       const result = await scanFile(
-        ['test/fixtures/vue-project/src'],
-        mockResolveComponent,
+        [path.join(projectRoot, 'src/main.ts')],
+        vueModule.createComponentResolver(),
       );
 
       expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
@@ -200,28 +202,62 @@ describe('scanFile', () => {
           "src/RegularComponent.vue": [],
           "src/TestComponent.vue": [],
           "src/components/AppButton.vue": [
-            "src/components/BaseButton.vue",
             "src/TestComponent.vue",
+            "src/components/BaseButton.vue",
           ],
           "src/components/BaseButton.vue": [],
+          "src/composables/useFoo.ts": [],
           "src/main.ts": [
             "src/App.vue",
+            "src/composables/useFoo.ts",
           ],
         }
       `);
 
       mockCwd.mockReset();
-      mockResolveComponent.mockReset();
     });
 
     it('组件重复引用测试', async () => {
-      mockCwd.mockImplementation(() => path.join(__dirname, './fixtures/vue-project'));
-      mockResolveComponent.mockImplementation(vueModule.createComponentResolver());
-      vi.mocked(vueModule.isVue).mockReturnValueOnce(true);
+      const projectRoot = path.join(__dirname, './fixtures/vue-project');
+      mockCwd.mockImplementation(() => projectRoot);
+      const files = [
+        path.join(projectRoot, 'src/main.ts'),
+        path.join(projectRoot, 'src/App.vue'),
+      ];
+
+      const result = await scanFile(files, vueModule.createComponentResolver());
+
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
+        {
+          "src/App.vue": [
+            "src/RegularComponent.vue",
+            "src/components/AppButton.vue",
+          ],
+          "src/RegularComponent.vue": [],
+          "src/TestComponent.vue": [],
+          "src/components/AppButton.vue": [
+            "src/TestComponent.vue",
+            "src/components/BaseButton.vue",
+          ],
+          "src/components/BaseButton.vue": [],
+          "src/composables/useFoo.ts": [],
+          "src/main.ts": [
+            "src/App.vue",
+            "src/composables/useFoo.ts",
+          ],
+        }
+      `);
+
+      mockCwd.mockReset();
+    });
+
+    it('auto import function test', async () => {
+      const projectRoot = path.join(__dirname, './fixtures/vue-project');
+      mockCwd.mockImplementation(() => projectRoot);
 
       const result = await scanFile(
-        ['test/fixtures/vue-project/src'],
-        mockResolveComponent,
+        [path.join(projectRoot, 'src/main.ts')],
+        vueModule.createComponentResolver(),
       );
 
       expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
@@ -233,18 +269,19 @@ describe('scanFile', () => {
           "src/RegularComponent.vue": [],
           "src/TestComponent.vue": [],
           "src/components/AppButton.vue": [
-            "src/components/BaseButton.vue",
             "src/TestComponent.vue",
+            "src/components/BaseButton.vue",
           ],
           "src/components/BaseButton.vue": [],
+          "src/composables/useFoo.ts": [],
           "src/main.ts": [
             "src/App.vue",
+            "src/composables/useFoo.ts",
           ],
         }
       `);
 
       mockCwd.mockReset();
-      mockResolveComponent.mockReset();
     });
   });
 
@@ -265,8 +302,8 @@ describe('scanFile', () => {
             "src/components/Button.ts",
           ],
           "src/main.ts": [
-            "src/utils/math.ts",
             "src/components/Header.ts",
+            "src/utils/math.ts",
           ],
           "src/no-deps.ts": [],
           "src/utils/math.ts": [],
