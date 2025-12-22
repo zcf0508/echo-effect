@@ -1,10 +1,11 @@
-import type { ICruiseOptions } from 'dependency-cruiser';
 import type { ComponentResolver, EffectReport, ReverseDependencyGraph } from './types';
+import type { AffectedSymbol, CodeSnippet, CodeSymbol, SymbolReference } from './types/symbols';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { cruise } from 'dependency-cruiser';
+import { TreeSitterAnalyzer } from './analyzer/tree-sitter';
+import { scanDependenciesJsTs } from './analyzer/tree-sitter/deps';
 import { createAutoImportResolverFn } from './resolvers';
 import {
   ensurePackages,
@@ -84,25 +85,38 @@ export async function scanFile(
 ): Promise<Record<string, string[]>> {
   const tsConfigPath = getTsconfigPath(isNuxt);
 
-  const cruiseOptions: ICruiseOptions = {
-    doNotFollow: 'node_modules',
-    maxDepth: 99,
-    tsConfig: { fileName: tsConfigPath },
-    tsPreCompilationDeps: true,
-  };
-
   const tsConfig = tsConfigPath
     ? await extractTSConfig(tsConfigPath)
     : undefined;
-
-  const result = await cruise(entryPath, cruiseOptions, undefined, { tsConfig }).catch(() => undefined);
 
   const resolveAlias = (await interopDefault(await import('tsconfig-paths'))).createMatchPath(
     tsConfig?.options?.baseUrl || path.join(process.cwd(), '.'),
     tsConfig?.options?.paths ?? {},
   );
 
-  const dependencyObject: Record<string, string[]> = {};
+  const cwdName = path.basename(process.cwd());
+  const normalizedEntries = entryPath.map((p) => {
+    if (path.isAbsolute(p) && fs.existsSync(p)) {
+      return p;
+    }
+    const rel = path.resolve(process.cwd(), p);
+    if (fs.existsSync(rel)) {
+      return rel;
+    }
+    const marker = `${cwdName}${path.sep}`;
+    const idx = p.indexOf(marker);
+    if (idx >= 0) {
+      const sub = p.slice(idx + marker.length);
+      const rebased = path.resolve(process.cwd(), sub);
+      if (fs.existsSync(rebased)) {
+        return rebased;
+      }
+    }
+    return rel;
+  });
+
+  // 使用 Tree-Sitter 扫描 JS/TS 依赖，作为基础依赖图
+  const dependencyObject: Record<string, string[]> = await scanDependenciesJsTs(normalizedEntries);
 
   const addDependency = (file: string, dep: string, components?: Set<string>): void => {
     if (dep !== file && !dependencyObject[file]?.includes(dep)) {
@@ -114,44 +128,7 @@ export async function scanFile(
     }
   };
 
-  if (result?.output && typeof result?.output !== 'string') {
-    result.output.modules.forEach((module) => {
-      if (module.source) {
-        const resolvedSource = ensureFileExtension(
-          resolveAlias(
-            module.source,
-            undefined,
-            undefined,
-            EXTENSIONS,
-          ) || module.source,
-          EXTENSIONS,
-        );
-
-        const relativePath = path.relative(process.cwd(), resolvedSource);
-
-        if (relativePath.includes('node_modules') || !fs.existsSync(resolvedSource)) {
-          return;
-        }
-
-        if (!dependencyObject[relativePath]) {
-          dependencyObject[relativePath] = [];
-        }
-
-        module.dependencies
-          .filter((dep) => {
-            return dep.resolved && !dep.resolved.includes('node_modules');
-          })
-          .forEach((dep) => {
-            const resolvedDep = ensureFileExtension(
-              resolveAlias(dep.resolved, undefined, undefined, EXTENSIONS) || dep.resolved,
-              EXTENSIONS,
-            );
-            const depPath = path.relative(process.cwd(), resolvedDep);
-            addDependency(relativePath, depPath);
-          });
-      }
-    });
-  }
+  // Tree-Sitter 已经覆盖了 JS/TS 的 import/export/require 与自动导入，这里不再依赖 dependency-cruiser
 
   if (isVue()) {
     if (isRoot) {
@@ -168,6 +145,19 @@ export async function scanFile(
       filesToScan.add(file);
       deps.forEach(dep => filesToScan.add(dep));
     });
+    // 确保入口文件（包括 .vue）也参与扫描
+    normalizedEntries.forEach((abs) => {
+      const rel = path.relative(process.cwd(), abs);
+      const isFile = fs.existsSync(abs) && fs.statSync(abs).isFile();
+      const ext = path.extname(abs).toLowerCase();
+      const isSupported = ['.vue', '.ts', '.tsx', '.js', '.jsx'].includes(ext);
+      if (isFile && isSupported) {
+        filesToScan.add(rel);
+        if (!dependencyObject[rel]) {
+          dependencyObject[rel] = [];
+        }
+      }
+    });
 
     // 2. Scan for auto-imports and Vue components/imports in all identified files
     await Promise.all(Array.from(filesToScan).map(async (file) => {
@@ -178,25 +168,7 @@ export async function scanFile(
 
       const content = fs.readFileSync(filePath, 'utf-8');
 
-      // Auto-import scanning
-      // Strip comments and strings to avoid false positives
-      const cleanContent = content
-        .replace(/\/\/.*$/gm, '') // single line comments
-        .replace(/\/\*[\s\S]*?\*\//g, '') // multi-line comments
-        .replace(/(['"])(?:(?!\1)[^\\]|\\.)*?\1/g, '') // single/double quoted strings
-        .replace(/`[\s\S]*?`/g, ''); // template literals (simplified)
-
-      const identifiers = cleanContent.match(/\b(\w+)\b/g) || [];
-      const uniqueIdentifiers = [...new Set(identifiers)];
-
-      uniqueIdentifiers.forEach((id) => {
-        const resolved = autoImportResolver(id);
-        if (resolved) {
-          const resolvedWithExt = ensureFileExtension(resolved, EXTENSIONS);
-          const relPath = path.relative(process.cwd(), resolvedWithExt);
-          addDependency(file, relPath, newLinkedComponents);
-        }
-      });
+      // Auto-import 已由 Tree-Sitter 基础扫描覆盖，避免重复处理
 
       // Vue specific scanning
       if (file.endsWith('.vue')) {
@@ -324,4 +296,76 @@ export function calculateEffect(
   }
 
   return effectReport;
+}
+
+export interface ScanOptions {
+  analyzer?: 'auto' | 'dependency-cruiser' | 'tree-sitter'
+  maxDepth?: number
+  includeSymbols?: boolean
+  includeSnippets?: boolean
+}
+
+export async function buildReverseDependencyGraphWithSymbols(
+  entryPath: string,
+  options?: ScanOptions,
+): Promise<{
+    dependencyGraph: ReverseDependencyGraph
+    symbolMap: Map<string, CodeSymbol[]>
+    references: SymbolReference[]
+  }> {
+  const dependencyGraph = await buildReverseDependencyGraph(entryPath);
+  const symbolMap = new Map<string, CodeSymbol[]>();
+  const references: SymbolReference[] = [];
+  const files = new Set<string>();
+  dependencyGraph.forEach((_, file) => files.add(file));
+  dependencyGraph.forEach(dependents => dependents.forEach(f => files.add(f)));
+  const useTreeSitter = options?.analyzer !== 'dependency-cruiser';
+  if (useTreeSitter) {
+    for (const absPath of files) {
+      if (!fs.existsSync(absPath) || fs.statSync(absPath).isDirectory()) {
+        continue;
+      }
+      const ext = path.extname(absPath).toLowerCase();
+      const isJs = ext === '.js' || ext === '.jsx';
+      const isTs = ext === '.ts' || ext === '.tsx';
+      if (!isJs && !isTs) {
+        continue;
+      }
+      const content = fs.readFileSync(absPath, 'utf-8');
+      const analyzer = new TreeSitterAnalyzer(isTs
+        ? 'typescript'
+        : 'javascript');
+      const syms = await analyzer.extractSymbols(absPath, content);
+      symbolMap.set(absPath, syms);
+      const refs = await analyzer.extractReferences(absPath, content);
+      references.push(...refs);
+    }
+  }
+  return { dependencyGraph, symbolMap, references };
+}
+
+export async function findAffectedSymbolsFromDiff(
+  filePath: string,
+  originalContent: string,
+  modifiedContent: string,
+  analyzer: import('./types/analyzer').CodeAnalyzer,
+): Promise<AffectedSymbol[]> {
+  void filePath;
+  void originalContent;
+  void modifiedContent;
+  void analyzer;
+  return [];
+}
+
+export function extractRelevantSnippets(
+  affectedSymbols: AffectedSymbol[],
+  reverseGraph: ReverseDependencyGraph,
+  references: SymbolReference[],
+  depth: number = 1,
+): CodeSnippet[] {
+  void affectedSymbols;
+  void reverseGraph;
+  void references;
+  void depth;
+  return [];
 }
