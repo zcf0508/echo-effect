@@ -185,11 +185,43 @@ function resolvePythonModule(currentFile: string, module: string): string | null
   return null;
 }
 
+let JAVA_SOURCE_ROOTS_CACHE: { key: string, roots: string[] } | null = null;
+function discoverJavaSourceRoots(): string[] {
+  const base = process.cwd();
+  const roots = new Set<string>();
+  roots.add(base);
+  roots.add(path.join(base, 'src', 'main', 'java'));
+  roots.add(path.join(base, 'src'));
+  try {
+    walkdir.sync(base, (p) => {
+      if (!p.includes('node_modules')) {
+        if (p.endsWith(path.join('src', 'main', 'java')) || p.endsWith(`${path.sep}src`)) {
+          roots.add(p);
+        }
+      }
+    });
+  }
+  catch {}
+  return Array.from(roots);
+}
+function getJavaSourceRoots(): string[] {
+  const key = process.cwd();
+  if (!JAVA_SOURCE_ROOTS_CACHE || JAVA_SOURCE_ROOTS_CACHE.key !== key) {
+    JAVA_SOURCE_ROOTS_CACHE = { key, roots: discoverJavaSourceRoots() };
+  }
+  return JAVA_SOURCE_ROOTS_CACHE.roots;
+}
+
 function resolveJavaImport(importPath: string): string | null {
-  const absPath = `${path.resolve(process.cwd(), importPath.split('.').join('/'))}.java`;
-  return fs.existsSync(absPath)
-    ? absPath
-    : null;
+  const relPath = importPath.split('.').join('/');
+  const roots = getJavaSourceRoots();
+  for (const root of roots) {
+    const absPath = `${path.resolve(root, relPath)}.java`;
+    if (fs.existsSync(absPath)) {
+      return absPath;
+    }
+  }
+  return null;
 }
 
 function resolveGoImport(currentFile: string, spec: string): string[] {
@@ -199,7 +231,14 @@ function resolveGoImport(currentFile: string, spec: string): string[] {
     base = path.resolve(dir, spec);
   }
   else {
-    base = path.resolve(process.cwd(), spec);
+    const modPath = getGoModuleName();
+    if (modPath && (spec === modPath || spec.startsWith(`${modPath}/`))) {
+      const sub = spec.slice(modPath.length).replace(/^\//, '');
+      base = path.resolve(process.cwd(), sub);
+    }
+    else {
+      base = path.resolve(process.cwd(), spec);
+    }
   }
   if (fs.existsSync(base) && fs.statSync(base).isDirectory()) {
     const files: string[] = [];
@@ -229,6 +268,24 @@ function resolveCppInclude(currentFile: string, spec: string): string | null {
   return fs.existsSync(rootAbs)
     ? rootAbs
     : null;
+}
+
+let GO_MOD_NAME: string | null = null;
+function initGoModuleName(): void {
+  try {
+    const modFile = path.resolve(process.cwd(), 'go.mod');
+    if (fs.existsSync(modFile)) {
+      const content = fs.readFileSync(modFile, 'utf-8');
+      const m = content.match(/^\s*module\s+(\S+)\s*$/m);
+      GO_MOD_NAME = m?.[1] || null;
+    }
+  }
+  catch {
+    GO_MOD_NAME = null;
+  }
+}
+function getGoModuleName(): string | null {
+  return GO_MOD_NAME;
 }
 
 export async function scanDependenciesJsTs(entryPaths: string[]): Promise<Record<string, string[]>> {
@@ -370,6 +427,7 @@ export async function scanDependenciesMultiLang(entryPaths: string[]): Promise<R
   const java = await loadLanguage('java');
   const go = await loadLanguage('go');
   const cpp = await loadLanguage('cpp');
+  initGoModuleName();
   while (queue.length) {
     const file = queue.shift()!;
     if (visited.has(file)) {

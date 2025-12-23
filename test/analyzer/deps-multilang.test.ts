@@ -57,6 +57,27 @@ describe('多语言依赖扫描', () => {
     mockCwd.mockReset();
   });
 
+  it('java import 解析 src/main/java 源根', async () => {
+    const root = path.join(__dirname, '../fixtures');
+    const proj = path.join(root, 'java-root-project');
+    const fs = await import('node:fs');
+    if (!fs.existsSync(proj)) {
+      fs.mkdirSync(proj);
+    }
+    const srcMainJava = path.join(proj, 'src', 'main', 'java', 'pkg');
+    fs.mkdirSync(srcMainJava, { recursive: true });
+    fs.writeFileSync(path.join(srcMainJava, 'A.java'), 'package pkg; public class A {}', 'utf-8');
+    fs.writeFileSync(path.join(proj, 'B.java'), 'import pkg.A; public class B { A a; }', 'utf-8');
+    mockCwd.mockImplementation(() => proj);
+    const graph = await buildReverseDependencyGraph('B.java');
+    const aAbs = path.resolve(srcMainJava, 'A.java');
+    const bAbs = path.resolve(proj, 'B.java');
+    const dependents = graph.get(aAbs) || new Set();
+    expect(dependents.has(bAbs)).toBe(true);
+    fs.rmSync(path.join(srcMainJava, 'A.java'));
+    fs.rmSync(path.join(proj, 'B.java'));
+  });
+
   it('go 相对导入依赖', async () => {
     const root = path.join(__dirname, '../fixtures/multi-lang-project/go');
     mockCwd.mockImplementation(() => root);
@@ -72,6 +93,31 @@ describe('多语言依赖扫描', () => {
     const mainAbs = path.resolve(root, 'main.go');
     const dependents = graph.get(utilAbs) || new Set();
     expect(dependents.has(mainAbs)).toBe(true);
+    fs.rmSync(path.join(pkgDir, 'util.go'));
+    fs.rmSync(path.join(root, 'main.go'));
+    mockCwd.mockReset();
+  });
+
+  it('go 模块 import 依赖（基于 go.mod）', async () => {
+    const root = path.join(__dirname, '../fixtures/go-mod-project');
+    const fs = await import('node:fs');
+    if (!fs.existsSync(root)) {
+      fs.mkdirSync(root);
+    }
+    fs.writeFileSync(path.join(root, 'go.mod'), 'module example.com/mod\n', 'utf-8');
+    const pkgDir = path.join(root, 'pkg');
+    if (!fs.existsSync(pkgDir)) {
+      fs.mkdirSync(pkgDir);
+    }
+    fs.writeFileSync(path.join(pkgDir, 'util.go'), 'package pkg; func U() {}', 'utf-8');
+    fs.writeFileSync(path.join(root, 'main.go'), 'package main\nimport "example.com/mod/pkg"\nfunc main(){ pkg.U() }', 'utf-8');
+    mockCwd.mockImplementation(() => root);
+    const graph = await buildReverseDependencyGraph('main.go');
+    const utilAbs = path.resolve(pkgDir, 'util.go');
+    const mainAbs = path.resolve(root, 'main.go');
+    const dependents = graph.get(utilAbs) || new Set();
+    expect(dependents.has(mainAbs)).toBe(true);
+    fs.rmSync(path.join(root, 'go.mod'));
     fs.rmSync(path.join(pkgDir, 'util.go'));
     fs.rmSync(path.join(root, 'main.go'));
     mockCwd.mockReset();
