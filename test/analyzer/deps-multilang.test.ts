@@ -78,6 +78,31 @@ describe('多语言依赖扫描', () => {
     fs.rmSync(path.join(proj, 'B.java'));
   });
 
+  it('java import 通配符依赖（pkg.*）', async () => {
+    const root = path.join(__dirname, '../fixtures');
+    const proj = path.join(root, 'java-root-project');
+    const fs = await import('node:fs');
+    if (!fs.existsSync(proj)) {
+      fs.mkdirSync(proj);
+    }
+    const srcMainJava = path.join(proj, 'src', 'main', 'java', 'pkg');
+    fs.mkdirSync(srcMainJava, { recursive: true });
+    fs.writeFileSync(path.join(srcMainJava, 'A.java'), 'package pkg; public class A {}', 'utf-8');
+    fs.writeFileSync(path.join(srcMainJava, 'C.java'), 'package pkg; public class C {}', 'utf-8');
+    fs.writeFileSync(path.join(proj, 'B2.java'), 'import pkg.*; public class B2 { A a; C c; }', 'utf-8');
+    mockCwd.mockImplementation(() => proj);
+    const graph = await buildReverseDependencyGraph('B2.java');
+    const aAbs = path.resolve(srcMainJava, 'A.java');
+    const cAbs = path.resolve(srcMainJava, 'C.java');
+    const b2Abs = path.resolve(proj, 'B2.java');
+    const depA = graph.get(aAbs) || new Set();
+    const depC = graph.get(cAbs) || new Set();
+    expect(depA.has(b2Abs)).toBe(true);
+    expect(depC.has(b2Abs)).toBe(true);
+    fs.rmSync(path.join(srcMainJava, 'A.java'));
+    fs.rmSync(path.join(srcMainJava, 'C.java'));
+    fs.rmSync(path.join(proj, 'B2.java'));
+  });
   it('go 相对导入依赖', async () => {
     const root = path.join(__dirname, '../fixtures/multi-lang-project/go');
     mockCwd.mockImplementation(() => root);

@@ -224,6 +224,24 @@ function resolveJavaImport(importPath: string): string | null {
   return null;
 }
 
+function resolveJavaWildcardImport(importPath: string): string[] {
+  const results: string[] = [];
+  const pkg = importPath.replace(/\.\*$/, '');
+  const relDir = pkg.split('.').join('/');
+  const roots = getJavaSourceRoots();
+  for (const root of roots) {
+    const dir = path.resolve(root, relDir);
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      for (const f of fs.readdirSync(dir)) {
+        if (f.endsWith('.java')) {
+          results.push(path.join(dir, f));
+        }
+      }
+    }
+  }
+  return results;
+}
+
 function resolveGoImport(currentFile: string, spec: string): string[] {
   const dir = path.dirname(currentFile);
   let base: string;
@@ -496,11 +514,22 @@ export async function scanDependenciesMultiLang(entryPaths: string[]): Promise<R
         const node = stack.pop()!;
         if (node.type === 'import_declaration') {
           const text = node.text.replace(/^\s*import\s+/, '').replace(/;$/, '').trim();
-          const resolved = resolveJavaImport(text);
-          if (resolved) {
-            pushDep(file, resolved);
-            if (!visited.has(resolved)) {
-              queue.push(resolved);
+          if (/\.\*\s*$/.test(text)) {
+            const files = resolveJavaWildcardImport(text);
+            files.forEach((f) => {
+              pushDep(file, f);
+              if (!visited.has(f)) {
+                queue.push(f);
+              }
+            });
+          }
+          else {
+            const resolved = resolveJavaImport(text);
+            if (resolved) {
+              pushDep(file, resolved);
+              if (!visited.has(resolved)) {
+                queue.push(resolved);
+              }
             }
           }
         }
