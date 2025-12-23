@@ -1,10 +1,12 @@
-import type { ICruiseOptions } from 'dependency-cruiser';
 import type { ComponentResolver, EffectReport, ReverseDependencyGraph } from './types';
+import type { AffectedSymbol, CodeSnippet, CodeSymbol, SymbolReference } from './types/symbols';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { cruise } from 'dependency-cruiser';
+import { analyzerRegistry } from './analyzer/registry';
+import { TreeSitterAnalyzer } from './analyzer/tree-sitter';
+import { scanDependenciesJsTs, scanDependenciesMultiLang } from './analyzer/tree-sitter/deps';
 import { createAutoImportResolverFn } from './resolvers';
 import {
   ensurePackages,
@@ -84,25 +86,49 @@ export async function scanFile(
 ): Promise<Record<string, string[]>> {
   const tsConfigPath = getTsconfigPath(isNuxt);
 
-  const cruiseOptions: ICruiseOptions = {
-    doNotFollow: 'node_modules',
-    maxDepth: 99,
-    tsConfig: { fileName: tsConfigPath },
-    tsPreCompilationDeps: true,
-  };
-
   const tsConfig = tsConfigPath
     ? await extractTSConfig(tsConfigPath)
     : undefined;
-
-  const result = await cruise(entryPath, cruiseOptions, undefined, { tsConfig }).catch(() => undefined);
 
   const resolveAlias = (await interopDefault(await import('tsconfig-paths'))).createMatchPath(
     tsConfig?.options?.baseUrl || path.join(process.cwd(), '.'),
     tsConfig?.options?.paths ?? {},
   );
 
-  const dependencyObject: Record<string, string[]> = {};
+  const cwdName = path.basename(process.cwd());
+  const normalizedEntries = entryPath.map((p) => {
+    if (path.isAbsolute(p) && fs.existsSync(p)) {
+      return p;
+    }
+    const rel = path.resolve(process.cwd(), p);
+    if (fs.existsSync(rel)) {
+      return rel;
+    }
+    const marker = `${cwdName}${path.sep}`;
+    const idx = p.indexOf(marker);
+    if (idx >= 0) {
+      const sub = p.slice(idx + marker.length);
+      const rebased = path.resolve(process.cwd(), sub);
+      if (fs.existsSync(rebased)) {
+        return rebased;
+      }
+    }
+    return rel;
+  });
+
+  // 使用 Tree-Sitter 扫描依赖（JS/TS 为基础，多语言补充）
+  const dependencyObject: Record<string, string[]> = await scanDependenciesJsTs(normalizedEntries);
+  const multiDeps = await scanDependenciesMultiLang(normalizedEntries);
+  Object.entries(multiDeps).forEach(([file, deps]) => {
+    if (!dependencyObject[file]) {
+      dependencyObject[file] = [];
+    }
+    deps.forEach((d) => {
+      if (!dependencyObject[file].includes(d)) {
+        dependencyObject[file].push(d);
+      }
+    });
+  });
 
   const addDependency = (file: string, dep: string, components?: Set<string>): void => {
     if (dep !== file && !dependencyObject[file]?.includes(dep)) {
@@ -114,44 +140,7 @@ export async function scanFile(
     }
   };
 
-  if (result?.output && typeof result?.output !== 'string') {
-    result.output.modules.forEach((module) => {
-      if (module.source) {
-        const resolvedSource = ensureFileExtension(
-          resolveAlias(
-            module.source,
-            undefined,
-            undefined,
-            EXTENSIONS,
-          ) || module.source,
-          EXTENSIONS,
-        );
-
-        const relativePath = path.relative(process.cwd(), resolvedSource);
-
-        if (relativePath.includes('node_modules') || !fs.existsSync(resolvedSource)) {
-          return;
-        }
-
-        if (!dependencyObject[relativePath]) {
-          dependencyObject[relativePath] = [];
-        }
-
-        module.dependencies
-          .filter((dep) => {
-            return dep.resolved && !dep.resolved.includes('node_modules');
-          })
-          .forEach((dep) => {
-            const resolvedDep = ensureFileExtension(
-              resolveAlias(dep.resolved, undefined, undefined, EXTENSIONS) || dep.resolved,
-              EXTENSIONS,
-            );
-            const depPath = path.relative(process.cwd(), resolvedDep);
-            addDependency(relativePath, depPath);
-          });
-      }
-    });
-  }
+  // Tree-Sitter 已经覆盖了 JS/TS 的 import/export/require 与自动导入，这里不再依赖 dependency-cruiser
 
   if (isVue()) {
     if (isRoot) {
@@ -168,6 +157,19 @@ export async function scanFile(
       filesToScan.add(file);
       deps.forEach(dep => filesToScan.add(dep));
     });
+    // 确保入口文件（包括 .vue）也参与扫描
+    normalizedEntries.forEach((abs) => {
+      const rel = path.relative(process.cwd(), abs);
+      const isFile = fs.existsSync(abs) && fs.statSync(abs).isFile();
+      const ext = path.extname(abs).toLowerCase();
+      const isSupported = ['.vue', '.ts', '.tsx', '.js', '.jsx'].includes(ext);
+      if (isFile && isSupported) {
+        filesToScan.add(rel);
+        if (!dependencyObject[rel]) {
+          dependencyObject[rel] = [];
+        }
+      }
+    });
 
     // 2. Scan for auto-imports and Vue components/imports in all identified files
     await Promise.all(Array.from(filesToScan).map(async (file) => {
@@ -178,25 +180,7 @@ export async function scanFile(
 
       const content = fs.readFileSync(filePath, 'utf-8');
 
-      // Auto-import scanning
-      // Strip comments and strings to avoid false positives
-      const cleanContent = content
-        .replace(/\/\/.*$/gm, '') // single line comments
-        .replace(/\/\*[\s\S]*?\*\//g, '') // multi-line comments
-        .replace(/(['"])(?:(?!\1)[^\\]|\\.)*?\1/g, '') // single/double quoted strings
-        .replace(/`[\s\S]*?`/g, ''); // template literals (simplified)
-
-      const identifiers = cleanContent.match(/\b(\w+)\b/g) || [];
-      const uniqueIdentifiers = [...new Set(identifiers)];
-
-      uniqueIdentifiers.forEach((id) => {
-        const resolved = autoImportResolver(id);
-        if (resolved) {
-          const resolvedWithExt = ensureFileExtension(resolved, EXTENSIONS);
-          const relPath = path.relative(process.cwd(), resolvedWithExt);
-          addDependency(file, relPath, newLinkedComponents);
-        }
-      });
+      // Auto-import 已由 Tree-Sitter 基础扫描覆盖，避免重复处理
 
       // Vue specific scanning
       if (file.endsWith('.vue')) {
@@ -324,4 +308,286 @@ export function calculateEffect(
   }
 
   return effectReport;
+}
+
+export interface ScanOptions {
+  analyzer?: 'auto' | 'dependency-cruiser' | 'tree-sitter'
+  maxDepth?: number
+  includeSymbols?: boolean
+  includeSnippets?: boolean
+}
+
+export async function buildReverseDependencyGraphWithSymbols(
+  entryPath: string,
+  options?: ScanOptions,
+): Promise<{
+    dependencyGraph: ReverseDependencyGraph
+    symbolMap: Map<string, CodeSymbol[]>
+    references: SymbolReference[]
+  }> {
+  const dependencyGraph = await buildReverseDependencyGraph(entryPath);
+  const symbolMap = new Map<string, CodeSymbol[]>();
+  const references: SymbolReference[] = [];
+  const files = new Set<string>();
+  dependencyGraph.forEach((_, file) => files.add(file));
+  dependencyGraph.forEach(dependents => dependents.forEach(f => files.add(f)));
+  const useTreeSitter = options?.analyzer !== 'dependency-cruiser';
+  if (useTreeSitter) {
+    const entryAbs = path.isAbsolute(entryPath)
+      ? entryPath
+      : path.resolve(process.cwd(), entryPath);
+    files.add(entryAbs);
+    const getLangByExt = (ext: string): string | null => {
+      if (ext === '.js') {
+        return 'javascript';
+      }
+      if (ext === '.jsx') {
+        return 'jsx';
+      }
+      if (ext === '.ts') {
+        return 'typescript';
+      }
+      if (ext === '.tsx') {
+        return 'tsx';
+      }
+      if (ext === '.py') {
+        return 'python';
+      }
+      if (ext === '.java') {
+        return 'java';
+      }
+      if (ext === '.go') {
+        return 'go';
+      }
+      if (ext === '.cpp' || ext === '.cc' || ext === '.cxx' || ext === '.h' || ext === '.hh' || ext === '.hpp') {
+        return 'cpp';
+      }
+      return null;
+    };
+    for (const absPath of files) {
+      if (!fs.existsSync(absPath) || fs.statSync(absPath).isDirectory()) {
+        continue;
+      }
+      const ext = path.extname(absPath).toLowerCase();
+      const lang = getLangByExt(ext);
+      if (!lang) {
+        continue;
+      }
+      const content = fs.readFileSync(absPath, 'utf-8');
+      let analyzer = analyzerRegistry.getAnalyzer(lang);
+      if (!analyzer) {
+        analyzer = new TreeSitterAnalyzer(lang);
+        analyzerRegistry.register(analyzer);
+      }
+      const syms = await analyzer.extractSymbols(absPath, content);
+      symbolMap.set(absPath, syms);
+      const refs = await analyzer.extractReferences(absPath, content);
+      references.push(...refs);
+    }
+  }
+  return { dependencyGraph, symbolMap, references };
+}
+
+function getDependenciesOf(fileAbs: string, reverseGraph: ReverseDependencyGraph): Set<string> {
+  const deps = new Set<string>();
+  reverseGraph.forEach((dependents, dep) => {
+    if (dependents.has(fileAbs)) {
+      deps.add(dep);
+    }
+  });
+  return deps;
+}
+
+export function buildCrossFileSymbolReferenceMap(
+  dependencyGraph: ReverseDependencyGraph,
+  symbolMap: Map<string, CodeSymbol[]>,
+  references: SymbolReference[],
+): Map<string, SymbolReference[]> {
+  const defIndexByName: Map<string, CodeSymbol[]> = new Map();
+  symbolMap.forEach((symbols) => {
+    symbols.forEach((s) => {
+      const arr = defIndexByName.get(s.name) || [];
+      arr.push(s);
+      defIndexByName.set(s.name, arr);
+    });
+  });
+  const result = new Map<string, SymbolReference[]>();
+  references.forEach((ref) => {
+    const candidates = (defIndexByName.get(ref.symbol.name) || []).filter(d => d.language === ref.symbol.language);
+    if (candidates.length === 0) {
+      return;
+    }
+    const referrerAbs = path.resolve(process.cwd(), ref.referrer.filePath);
+    const deps = getDependenciesOf(referrerAbs, dependencyGraph);
+    candidates.forEach((def) => {
+      const defAbs = path.resolve(process.cwd(), def.filePath);
+      const sameFile = defAbs === referrerAbs;
+      if (sameFile || deps.has(defAbs)) {
+        const key = `${defAbs}::${def.name}`;
+        const arr = result.get(key) || [];
+        arr.push(ref);
+        result.set(key, arr);
+      }
+    });
+  });
+  return result;
+}
+
+export async function findAffectedSymbolsFromDiff(
+  filePath: string,
+  originalContent: string,
+  modifiedContent: string,
+  analyzer: import('./types/analyzer').CodeAnalyzer,
+): Promise<AffectedSymbol[]> {
+  const oLines = originalContent.split('\n');
+  const mLines = modifiedContent.split('\n');
+  let start = 1;
+  const endO = oLines.length;
+  let endM = mLines.length;
+  let i = 0;
+  while (i < oLines.length && i < mLines.length && oLines[i] === mLines[i]) {
+    i++;
+  }
+  start = i + 1;
+  let jO = oLines.length - 1;
+  let jM = mLines.length - 1;
+  while (jO >= i && jM >= i && oLines[jO] === mLines[jM]) {
+    jO--;
+    jM--;
+  }
+  endM = jM + 1;
+  if (start > endM) {
+    return [];
+  }
+  const affected = await analyzer.findAffectedSymbols(filePath, modifiedContent, { startLine: start, endLine: endM });
+  const refs = await analyzer.extractReferences(filePath, modifiedContent);
+  const refMap = new Map<string, SymbolReference[]>();
+  refs.forEach((r) => {
+    const k = r.symbol.name;
+    const arr = refMap.get(k) || [];
+    arr.push(r);
+    refMap.set(k, arr);
+  });
+  affected.forEach((a) => {
+    a.referencedBy = refMap.get(a.symbol.name) || [];
+  });
+  return affected;
+}
+
+export function extractRelevantSnippets(
+  affectedSymbols: AffectedSymbol[],
+  reverseGraph: ReverseDependencyGraph,
+  references: SymbolReference[],
+  depth: number = 1,
+): CodeSnippet[] {
+  const snippets: CodeSnippet[] = [];
+  const added = new Set<string>();
+  const reachable = new Set<string>();
+  const queue: { file: string, d: number }[] = [];
+  affectedSymbols.forEach((a) => {
+    queue.push({ file: path.resolve(process.cwd(), a.symbol.filePath), d: 0 });
+  });
+  while (queue.length) {
+    const { file, d } = queue.shift()!;
+    if (reachable.has(file)) {
+      continue;
+    }
+    reachable.add(file);
+    if (d < depth) {
+      const deps = reverseGraph.get(file) || new Set();
+      deps.forEach(f => queue.push({ file: f, d: d + 1 }));
+    }
+  }
+  affectedSymbols.forEach((a) => {
+    const abs = path.resolve(process.cwd(), a.symbol.filePath);
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      const content = fs.readFileSync(abs, 'utf-8');
+      const lines = content.split('\n');
+      const s = Math.max(1, a.symbol.range.startLine);
+      const e = Math.min(lines.length, a.symbol.range.endLine);
+      const code = lines.slice(s - 1, e).join('\n');
+      const key = `${abs}:${s}:${e}`;
+      if (!added.has(key)) {
+        snippets.push({
+          filePath: abs,
+          type: 'block',
+          name: a.symbol.name,
+          startLine: s,
+          endLine: e,
+          code,
+          symbolsUsed: [],
+        });
+        added.add(key);
+      }
+    }
+    references.forEach((r) => {
+      const absR = path.resolve(process.cwd(), r.referrer.filePath);
+      if (r.symbol.name === a.symbol.name && reachable.has(absR)) {
+        const key = `${absR}:${r.context.startLine}:${r.context.endLine}`;
+        if (!added.has(key)) {
+          snippets.push(r.context);
+          added.add(key);
+        }
+      }
+    });
+  });
+  return snippets;
+}
+
+export async function buildEnhancedEffectFromChanges(
+  entryPath: string,
+  changes: Array<{ filePath: string, original: string, modified: string }>,
+  options?: { snippetDepth?: number },
+): Promise<{
+    dependencyGraph: ReverseDependencyGraph
+    symbolMap: Map<string, CodeSymbol[]>
+    references: SymbolReference[]
+    affectedSymbols: AffectedSymbol[]
+    snippets: CodeSnippet[]
+  }> {
+  const { dependencyGraph, symbolMap, references } = await buildReverseDependencyGraphWithSymbols(entryPath, { analyzer: 'tree-sitter' });
+  const affectedSymbols: AffectedSymbol[] = [];
+  for (const ch of changes) {
+    const abs = path.resolve(process.cwd(), ch.filePath);
+    const ext = path.extname(abs).toLowerCase();
+    const lang = ((): string | null => {
+      if (ext === '.js') {
+        return 'javascript';
+      }
+      if (ext === '.jsx') {
+        return 'jsx';
+      }
+      if (ext === '.ts') {
+        return 'typescript';
+      }
+      if (ext === '.tsx') {
+        return 'tsx';
+      }
+      if (ext === '.py') {
+        return 'python';
+      }
+      if (ext === '.java') {
+        return 'java';
+      }
+      if (ext === '.go') {
+        return 'go';
+      }
+      if (ext === '.cpp' || ext === '.cc' || ext === '.cxx' || ext === '.h' || ext === '.hh' || ext === '.hpp') {
+        return 'cpp';
+      }
+      return null;
+    })();
+    if (!lang) {
+      continue;
+    }
+    let analyzer = analyzerRegistry.getAnalyzer(lang);
+    if (!analyzer) {
+      analyzer = new TreeSitterAnalyzer(lang);
+      analyzerRegistry.register(analyzer);
+    }
+    const aff = await findAffectedSymbolsFromDiff(abs, ch.original, ch.modified, analyzer);
+    affectedSymbols.push(...aff);
+  }
+  const snippets = extractRelevantSnippets(affectedSymbols, dependencyGraph, references, options?.snippetDepth ?? 1);
+  return { dependencyGraph, symbolMap, references, affectedSymbols, snippets };
 }

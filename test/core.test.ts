@@ -78,7 +78,12 @@ describe('scanFile', () => {
 
       expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
         {
-          "src/components/Header.ts": [],
+          "src/components/Button.ts": [
+            "src/utils/math.ts",
+          ],
+          "src/components/Header.ts": [
+            "src/components/Button.ts",
+          ],
           "src/main.ts": [
             "src/components/Header.ts",
             "src/utils/math.ts",
@@ -211,6 +216,33 @@ describe('scanFile', () => {
             "src/App.vue",
             "src/composables/useFoo.ts",
           ],
+        }
+      `);
+
+      mockCwd.mockReset();
+    });
+
+    it('vue 入口为 .vue 的场景', async () => {
+      const projectRoot = path.join(__dirname, './fixtures/vue-project');
+      mockCwd.mockImplementation(() => projectRoot);
+      const result = await scanFile(
+        [path.join(projectRoot, 'src/App.vue')],
+        vueModule.createComponentResolver(),
+      );
+
+      expect(normalizeDependencyPaths(result)).toMatchInlineSnapshot(`
+        {
+          "src/App.vue": [
+            "src/RegularComponent.vue",
+            "src/components/AppButton.vue",
+          ],
+          "src/RegularComponent.vue": [],
+          "src/TestComponent.vue": [],
+          "src/components/AppButton.vue": [
+            "src/TestComponent.vue",
+            "src/components/BaseButton.vue",
+          ],
+          "src/components/BaseButton.vue": [],
         }
       `);
 

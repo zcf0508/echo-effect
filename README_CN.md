@@ -1,5 +1,6 @@
 # echo-effect
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/zcf0508/echo-effect)
 [![npm version][npm-version-src]][npm-version-href]
 [![npm downloads][npm-downloads-src]][npm-downloads-href]
 [![bundle][bundle-src]][bundle-href]
@@ -7,31 +8,38 @@
 [![License][license-src]][license-href]
 
 `EchoEffect` 是一款专为前端生态设计的强大依赖影响分析工具。
-它帮助开发者理解代码变更在项目中的“涟漪效应”，通过映射和分析依赖链，全面掌握变更的影响范围。
+它帮助开发者理解代码变更在项目中的"涟漪效应"，通过映射和分析依赖链，全面掌握变更的影响范围。
 
 ## 主要特性
 
+*   **多语言支持**：基于 Tree-Sitter 驱动，支持 JavaScript/TypeScript、Python、Java、Go、C++ 等多种语言的准确分析。
 *   **Git 暂存文件分析**：聚焦于你即将提交的更改。
-*   **全面依赖关系映射**：利用 `dependency-cruiser` 理解以下文件的导入/导出关系：
-    *   JavaScript（`.js`, `.jsx`）
-    *   TypeScript（`.ts`, `.tsx`）
-    *   Vue 单文件组件（`.vue`）
-    *   ES Modules（`.mjs`）与 CommonJS（`.cjs`）
+*   **全面依赖关系映射**：使用 Tree-Sitter 构建依赖图，解析以下文件的导入/导出关系：
+    *   JavaScript (`.js`, `.jsx`)
+    *   TypeScript (`.ts`, `.tsx`)
+    *   Python (`.py`)
+    *   Java (`.java`)
+    *   Go (`.go`)
+    *   C++ (`.cpp`, `.h`, `.hpp`)
+    *   Vue.js 单文件组件 (`.vue`)
+    *   ES Modules (`.mjs`) 和 CommonJS (`.cjs`)
+*   **语义级分析**：提取符号（函数、类、方法）及其引用，实现精确的影响追踪。
+*   **智能代码片段提取**：基于改动的符号智能提取相关代码片段，降低 AI 代码审查的信噪比。
 *   **高级 Vue.js & Nuxt.js 支持**：
     *   解析 `.vue` 文件中的 `<template>` 部分，识别组件依赖。
     *   智能解析 `unplugin-vue-components` 自动引入的组件。
-    *   缺少依赖时，自动提示安装 Vue 解析相关依赖（`@vue/compiler-sfc`、`@vue/compiler-dom`）。
+    *   缺少依赖时自动提示安装 Vue 解析相关依赖（`@vue/compiler-sfc`、`@vue/compiler-dom`）。
 *   **影响层级报告**：清晰可视化影响链条：
     *   **Level 0**：你直接修改的暂存文件。
-    *   **Level 1+**：依赖 Level 0 文件的文件，依次递归。
-*   **CLI 命令行界面**：轻松集成到你的开发流程。
+    *   **Level 1+**：依赖 Level 0 文件的文件，依次递归，深度可配置。
+*   **CLI 命令行界面**：轻松集成到你的开发工作流程。
 
 ## 工作原理
 
 1.  **识别暂存文件**：运行 `git diff --name-only --cached --diff-filter=AM` 获取 Git 暂存区新增或修改的文件列表。
-2.  **构建依赖图**：从指定入口文件出发，利用 `dependency-cruiser` 扫描项目，映射所有模块依赖。对于 Vue/Nuxt 项目，还会额外解析模板组件依赖。
-3.  **反向依赖图**：反转依赖关系，分析“谁依赖了谁”。
-4.  **计算影响范围**：将暂存文件与反向依赖图对比，追踪并报告所有受影响文件，按影响层级分类。
+2.  **构建依赖图**：使用 Tree-Sitter 解析并映射模块依赖。对于 Vue/Nuxt 项目，还会额外解析模板组件依赖。
+3.  **提取符号与引用**：识别项目中的符号定义及其使用情况。
+4.  **计算影响范围**：将暂存文件与依赖图对比，追踪并报告所有受影响文件，按影响层级分类。
 5.  **输出报告**：在控制台输出清晰、带颜色的报告，详细列出修改及受影响文件。
 
 ## 使用方法
@@ -49,21 +57,51 @@ npx -y echo-effect <项目入口文件所在文件夹>
 npx -y echo-effect src/main.ts
 ```
 
+## 编程式使用
+
+```typescript
+import {
+  buildReverseDependencyGraphWithSymbols,
+  CodeSnippet,
+  CodeSymbol,
+  extractRelevantSnippets,
+  findAffectedSymbolsFromDiff,
+} from 'echo-effect';
+
+// 构建包含符号信息的依赖图
+const { dependencyGraph, symbolMap, references } = await buildReverseDependencyGraphWithSymbols('src/main.ts');
+
+// 从代码变更中找出受影响的符号
+const affectedSymbols = await findAffectedSymbolsFromDiff(
+  'path/to/file.ts',
+  originalContent,
+  modifiedContent,
+  analyzer,
+);
+
+// 提取相关代码片段
+const snippets = extractRelevantSnippets(affectedSymbols, dependencyGraph, references, 2);
+```
+
 ## 为什么选择 Echo Effect？
+
 - 主动风险评估：在提交或推送前，了解你的更改可能带来的影响范围。
 - 聚焦代码评审：帮助评审者关注受影响的关键区域。
 - 加深代码理解：洞察项目模块间的依赖关系。
 - 更安全的重构：在大范围重构时，提前掌握下游影响，提高信心。
+- AI 驱动的洞察：利用语义级分析实现更准确的代码审查和更低的 token 消耗。
 
 ## 测试
 
-项目包含对核心 `scanFile` 功能的全面测试覆盖：
+项目包含对核心功能的全面测试覆盖：
 
 ### 测试类别
 - **基础功能**：单文件扫描、多文件扫描、文件扩展名处理
 - **边界条件**：不存在的文件、空依赖、node_modules 过滤
 - **Vue 组件解析**：SFC 组件解析、重复组件处理
 - **路径处理**：TypeScript 路径别名解析、相对路径处理
+- **多语言支持**：所有支持语言的符号提取和引用追踪
+- **增强功能**：改动符号识别、代码片段提取
 
 ### 运行测试
 ```bash
@@ -71,6 +109,17 @@ npm test
 ```
 
 测试使用 Vitest，并正确模拟了文件系统操作和外部依赖。
+
+## 支持的语言
+
+| 语言 | 符号提取 | 引用提取 | 依赖扫描 |
+|------|----------|----------|----------|
+| JavaScript/JSX | ✅ | ✅ | ✅ |
+| TypeScript/TSX | ✅ | ✅ | ✅ |
+| Python | ✅ | ✅ | ✅ |
+| Java | ✅ | ✅ | ✅ |
+| Go | ✅ | ✅ | ✅ |
+| C++ | ✅ | ✅ | ✅ |
 
 ## 许可证
 

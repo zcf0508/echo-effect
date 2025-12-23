@@ -35,7 +35,7 @@
     "prepublishOnly": "pnpm run build",
     "release": "bumpp",
     "start": "tsx src/index.ts",
-    "test": "vitest",
+    "test": "vitest --run",
     "typecheck": "tsc --noEmit",
     "prepare": "simple-git-hooks"
   },
@@ -49,17 +49,25 @@
     "commondir": "catalog:",
     "consola": "catalog:cli",
     "debug": "catalog:",
-    "dependency-cruiser": "catalog:",
     "local-pkg": "catalog:",
     "ora": "catalog:",
     "pluralize": "catalog:",
     "pretty-ms": "catalog:",
     "rc": "catalog:",
     "stream-to-array": "catalog:",
+    "tree-sitter": "catalog:",
+    "tree-sitter-javascript": "catalog:",
+    "tree-sitter-typescript": "catalog:",
     "ts-graphviz": "catalog:",
     "tsconfig-paths": "catalog:",
     "typescript": "catalog:cli",
     "walkdir": "catalog:"
+  },
+  "optionalDependencies": {
+    "tree-sitter-cpp": "0.23.4",
+    "tree-sitter-go": "0.25.0",
+    "tree-sitter-java": "^0.23.5",
+    "tree-sitter-python": "^0.25.0"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:cli",

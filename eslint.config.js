@@ -24,7 +24,7 @@ export default antfu(
         'style/semi': ['error', 'always'],
         'style/indent': ['error', 2, { SwitchCase: 1 }],
         'style/max-len': [
-          'error',
+          'warn',
           {
             code: 120,
             tabWidth: 2,
