@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { TreeSitterAnalyzer } from './analyzer/tree-sitter';
-import { scanDependenciesJsTs } from './analyzer/tree-sitter/deps';
+import { scanDependenciesJsTs, scanDependenciesMultiLang } from './analyzer/tree-sitter/deps';
 import { createAutoImportResolverFn } from './resolvers';
 import {
   ensurePackages,
@@ -115,8 +115,19 @@ export async function scanFile(
     return rel;
   });
 
-  // 使用 Tree-Sitter 扫描 JS/TS 依赖，作为基础依赖图
+  // 使用 Tree-Sitter 扫描依赖（JS/TS 为基础，多语言补充）
   const dependencyObject: Record<string, string[]> = await scanDependenciesJsTs(normalizedEntries);
+  const multiDeps = await scanDependenciesMultiLang(normalizedEntries);
+  Object.entries(multiDeps).forEach(([file, deps]) => {
+    if (!dependencyObject[file]) {
+      dependencyObject[file] = [];
+    }
+    deps.forEach((d) => {
+      if (!dependencyObject[file].includes(d)) {
+        dependencyObject[file].push(d);
+      }
+    });
+  });
 
   const addDependency = (file: string, dep: string, components?: Set<string>): void => {
     if (dep !== file && !dependencyObject[file]?.includes(dep)) {
@@ -321,20 +332,48 @@ export async function buildReverseDependencyGraphWithSymbols(
   dependencyGraph.forEach(dependents => dependents.forEach(f => files.add(f)));
   const useTreeSitter = options?.analyzer !== 'dependency-cruiser';
   if (useTreeSitter) {
+    const entryAbs = path.isAbsolute(entryPath)
+      ? entryPath
+      : path.resolve(process.cwd(), entryPath);
+    files.add(entryAbs);
+    const getLangByExt = (ext: string): string | null => {
+      if (ext === '.js') {
+        return 'javascript';
+      }
+      if (ext === '.jsx') {
+        return 'jsx';
+      }
+      if (ext === '.ts') {
+        return 'typescript';
+      }
+      if (ext === '.tsx') {
+        return 'tsx';
+      }
+      if (ext === '.py') {
+        return 'python';
+      }
+      if (ext === '.java') {
+        return 'java';
+      }
+      if (ext === '.go') {
+        return 'go';
+      }
+      if (ext === '.cpp' || ext === '.cc' || ext === '.cxx' || ext === '.h' || ext === '.hh' || ext === '.hpp') {
+        return 'cpp';
+      }
+      return null;
+    };
     for (const absPath of files) {
       if (!fs.existsSync(absPath) || fs.statSync(absPath).isDirectory()) {
         continue;
       }
       const ext = path.extname(absPath).toLowerCase();
-      const isJs = ext === '.js' || ext === '.jsx';
-      const isTs = ext === '.ts' || ext === '.tsx';
-      if (!isJs && !isTs) {
+      const lang = getLangByExt(ext);
+      if (!lang) {
         continue;
       }
       const content = fs.readFileSync(absPath, 'utf-8');
-      const analyzer = new TreeSitterAnalyzer(isTs
-        ? 'typescript'
-        : 'javascript');
+      const analyzer = new TreeSitterAnalyzer(lang);
       const syms = await analyzer.extractSymbols(absPath, content);
       symbolMap.set(absPath, syms);
       const refs = await analyzer.extractReferences(absPath, content);
@@ -350,11 +389,39 @@ export async function findAffectedSymbolsFromDiff(
   modifiedContent: string,
   analyzer: import('./types/analyzer').CodeAnalyzer,
 ): Promise<AffectedSymbol[]> {
-  void filePath;
-  void originalContent;
-  void modifiedContent;
-  void analyzer;
-  return [];
+  const oLines = originalContent.split('\n');
+  const mLines = modifiedContent.split('\n');
+  let start = 1;
+  const endO = oLines.length;
+  let endM = mLines.length;
+  let i = 0;
+  while (i < oLines.length && i < mLines.length && oLines[i] === mLines[i]) {
+    i++;
+  }
+  start = i + 1;
+  let jO = oLines.length - 1;
+  let jM = mLines.length - 1;
+  while (jO >= i && jM >= i && oLines[jO] === mLines[jM]) {
+    jO--;
+    jM--;
+  }
+  endM = jM + 1;
+  if (start > endM) {
+    return [];
+  }
+  const affected = await analyzer.findAffectedSymbols(filePath, modifiedContent, { startLine: start, endLine: endM });
+  const refs = await analyzer.extractReferences(filePath, modifiedContent);
+  const refMap = new Map<string, SymbolReference[]>();
+  refs.forEach((r) => {
+    const k = r.symbol.name;
+    const arr = refMap.get(k) || [];
+    arr.push(r);
+    refMap.set(k, arr);
+  });
+  affected.forEach((a) => {
+    a.referencedBy = refMap.get(a.symbol.name) || [];
+  });
+  return affected;
 }
 
 export function extractRelevantSnippets(
@@ -363,9 +430,110 @@ export function extractRelevantSnippets(
   references: SymbolReference[],
   depth: number = 1,
 ): CodeSnippet[] {
-  void affectedSymbols;
-  void reverseGraph;
-  void references;
-  void depth;
-  return [];
+  const snippets: CodeSnippet[] = [];
+  const added = new Set<string>();
+  const reachable = new Set<string>();
+  const queue: { file: string, d: number }[] = [];
+  affectedSymbols.forEach((a) => {
+    queue.push({ file: path.resolve(process.cwd(), a.symbol.filePath), d: 0 });
+  });
+  while (queue.length) {
+    const { file, d } = queue.shift()!;
+    if (reachable.has(file)) {
+      continue;
+    }
+    reachable.add(file);
+    if (d < depth) {
+      const deps = reverseGraph.get(file) || new Set();
+      deps.forEach(f => queue.push({ file: f, d: d + 1 }));
+    }
+  }
+  affectedSymbols.forEach((a) => {
+    const abs = path.resolve(process.cwd(), a.symbol.filePath);
+    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+      const content = fs.readFileSync(abs, 'utf-8');
+      const lines = content.split('\n');
+      const s = Math.max(1, a.symbol.range.startLine);
+      const e = Math.min(lines.length, a.symbol.range.endLine);
+      const code = lines.slice(s - 1, e).join('\n');
+      const key = `${abs}:${s}:${e}`;
+      if (!added.has(key)) {
+        snippets.push({
+          filePath: abs,
+          type: 'block',
+          name: a.symbol.name,
+          startLine: s,
+          endLine: e,
+          code,
+          symbolsUsed: [],
+        });
+        added.add(key);
+      }
+    }
+    references.forEach((r) => {
+      const absR = path.resolve(process.cwd(), r.referrer.filePath);
+      if (r.symbol.name === a.symbol.name && reachable.has(absR)) {
+        const key = `${absR}:${r.context.startLine}:${r.context.endLine}`;
+        if (!added.has(key)) {
+          snippets.push(r.context);
+          added.add(key);
+        }
+      }
+    });
+  });
+  return snippets;
+}
+
+export async function buildEnhancedEffectFromChanges(
+  entryPath: string,
+  changes: Array<{ filePath: string, original: string, modified: string }>,
+  options?: { snippetDepth?: number },
+): Promise<{
+    dependencyGraph: ReverseDependencyGraph
+    symbolMap: Map<string, CodeSymbol[]>
+    references: SymbolReference[]
+    affectedSymbols: AffectedSymbol[]
+    snippets: CodeSnippet[]
+  }> {
+  const { dependencyGraph, symbolMap, references } = await buildReverseDependencyGraphWithSymbols(entryPath, { analyzer: 'tree-sitter' });
+  const affectedSymbols: AffectedSymbol[] = [];
+  for (const ch of changes) {
+    const abs = path.resolve(process.cwd(), ch.filePath);
+    const ext = path.extname(abs).toLowerCase();
+    const lang = ((): string | null => {
+      if (ext === '.js') {
+        return 'javascript';
+      }
+      if (ext === '.jsx') {
+        return 'jsx';
+      }
+      if (ext === '.ts') {
+        return 'typescript';
+      }
+      if (ext === '.tsx') {
+        return 'tsx';
+      }
+      if (ext === '.py') {
+        return 'python';
+      }
+      if (ext === '.java') {
+        return 'java';
+      }
+      if (ext === '.go') {
+        return 'go';
+      }
+      if (ext === '.cpp' || ext === '.cc' || ext === '.cxx' || ext === '.h' || ext === '.hh' || ext === '.hpp') {
+        return 'cpp';
+      }
+      return null;
+    })();
+    if (!lang) {
+      continue;
+    }
+    const analyzer = new TreeSitterAnalyzer(lang);
+    const aff = await findAffectedSymbolsFromDiff(abs, ch.original, ch.modified, analyzer);
+    affectedSymbols.push(...aff);
+  }
+  const snippets = extractRelevantSnippets(affectedSymbols, dependencyGraph, references, options?.snippetDepth ?? 1);
+  return { dependencyGraph, symbolMap, references, affectedSymbols, snippets };
 }
