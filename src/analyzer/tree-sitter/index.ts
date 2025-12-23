@@ -104,13 +104,61 @@ export class TreeSitterAnalyzer implements CodeAnalyzer {
     const tree = this.parser.parse(content);
     const res: CodeSymbol[] = [];
     const stack: Parser.SyntaxNode[] = [tree.rootNode];
+    const findNameNode = (root: Parser.SyntaxNode | null | undefined): Parser.SyntaxNode | null => {
+      if (!root) {
+        return null;
+      }
+      const focus = root.childForFieldName('declarator') || root;
+      const s: Parser.SyntaxNode[] = [focus];
+      let qualified: Parser.SyntaxNode | null = null;
+      while (s.length) {
+        const n = s.pop()!;
+        if (n.type === 'qualified_identifier') {
+          qualified = n;
+          break;
+        }
+        for (let i = 0; i < n.namedChildCount; i++) {
+          const c = n.namedChild(i);
+          if (c) {
+            s.push(c);
+          }
+        }
+      }
+      if (qualified) {
+        return qualified;
+      }
+      const s2: Parser.SyntaxNode[] = [focus];
+      while (s2.length) {
+        const n = s2.pop()!;
+        if (n.type === 'identifier' || n.type === 'type_identifier' || n.type === 'property_identifier') {
+          return n;
+        }
+        for (let i = 0; i < n.namedChildCount; i++) {
+          const c = n.namedChild(i);
+          if (c) {
+            s2.push(c);
+          }
+        }
+      }
+      return null;
+    };
     while (stack.length) {
       const node = stack.pop()!;
       const t = node.type;
       const langKey = this.currentLang;
       const pushSymbol = (nameNode: Parser.SyntaxNode | null | undefined, kind: CodeSymbol['type']): void => {
         if (nameNode) {
-          res.push({ name: nameNode.text, type: kind, filePath, range: toRange(nameNode), language: this.language });
+          const parent = nameNode.text.includes('::')
+            ? nameNode.text.slice(0, nameNode.text.lastIndexOf('::'))
+            : undefined;
+          res.push({
+            name: nameNode.text,
+            type: kind,
+            filePath,
+            range: toRange(nameNode),
+            language: this.language,
+            parent,
+          });
         }
       };
       if (langKey === 'javascript' || langKey === 'typescript' || langKey === 'tsx') {
@@ -164,8 +212,14 @@ export class TreeSitterAnalyzer implements CodeAnalyzer {
       }
       else if (langKey === 'cpp') {
         if (t === 'function_definition' || t === 'function_declaration') {
-          const name = node.childForFieldName('declarator')?.childForFieldName('declarator') || node.namedChildren.find(c => c.type === 'identifier');
-          pushSymbol(name, 'function');
+          const decl = node.childForFieldName('declarator');
+          const name = findNameNode(decl) || node.namedChildren.find(c => c.type === 'identifier');
+          if (name) {
+            const kind: CodeSymbol['type'] = name.text.includes('::')
+              ? 'method'
+              : 'function';
+            pushSymbol(name, kind);
+          }
         }
         else if (t === 'class_specifier' || t === 'class_declaration' || t === 'struct_specifier') {
           const name = node.namedChildren.find(c => c.type === 'type_identifier' || c.type === 'identifier');
@@ -188,6 +242,12 @@ export class TreeSitterAnalyzer implements CodeAnalyzer {
     const refs: SymbolReference[] = [];
     const stack: Parser.SyntaxNode[] = [tree.rootNode];
     const lines = content.split('\n');
+    const buildContext = (n: Parser.SyntaxNode): CodeSnippet => {
+      const s = n.startPosition.row + 1;
+      const e = n.endPosition.row + 1;
+      const code = lines.slice(s - 1, e).join('\n');
+      return { filePath, type: 'statement', startLine: s, endLine: e, code, symbolsUsed: [] };
+    };
     while (stack.length) {
       const node = stack.pop()!;
       const langKey = this.currentLang;
@@ -195,9 +255,6 @@ export class TreeSitterAnalyzer implements CodeAnalyzer {
         if (!callee) {
           return;
         }
-        const s = callee.startPosition.row + 1;
-        const e = callee.endPosition.row + 1;
-        const code = lines.slice(s - 1, e).join('\n');
         refs.push({
           symbol: {
             name: callee.text,
@@ -206,8 +263,8 @@ export class TreeSitterAnalyzer implements CodeAnalyzer {
             range: toRange(callee),
             language: this.language,
           },
-          referrer: { filePath, line: s, column: callee.startPosition.column, type: 'call' },
-          context: { filePath, type: 'statement', startLine: s, endLine: e, code, symbolsUsed: [] },
+          referrer: { filePath, line: callee.startPosition.row + 1, column: callee.startPosition.column, type: 'call' },
+          context: buildContext(callee),
         });
       };
       if (langKey === 'javascript' || langKey === 'typescript' || langKey === 'tsx') {
@@ -231,16 +288,194 @@ export class TreeSitterAnalyzer implements CodeAnalyzer {
           const callee = node.childForFieldName('name') || node.namedChildren.find(c => c.type === 'identifier');
           pushRef(callee);
         }
+        // extends / implements
+        if (node.type === 'class_declaration') {
+          const superclass = node.childForFieldName('superclass');
+          const superId = superclass?.namedChildren.find(c => c.type === 'type_identifier' || c.type === 'identifier') || superclass || null;
+          if (superId) {
+            refs.push({
+              symbol: { name: superId.text, type: 'class', filePath, range: toRange(superId), language: this.language },
+              referrer: { filePath, line: node.startPosition.row + 1, column: node.startPosition.column, type: 'inherit' },
+              context: buildContext(node),
+            });
+          }
+          const interfaces = node.childForFieldName('interfaces');
+          if (interfaces) {
+            for (let i = 0; i < interfaces.namedChildCount; i++) {
+              const iface = interfaces.namedChild(i);
+              const ifaceId = iface?.namedChildren.find(c => c.type === 'type_identifier' || c.type === 'identifier') || iface || null;
+              if (ifaceId) {
+                refs.push({
+                  symbol: { name: ifaceId.text, type: 'interface', filePath, range: toRange(ifaceId), language: this.language },
+                  referrer: { filePath, line: node.startPosition.row + 1, column: node.startPosition.column, type: 'inherit' },
+                  context: buildContext(node),
+                });
+              }
+            }
+          }
+        }
       }
       else if (langKey === 'go') {
         if (node.type === 'call_expression') {
           const callee = node.childForFieldName('function') || node.namedChildren.find(c => c.type === 'identifier');
           pushRef(callee);
         }
+        // implicit interface implementation detection
+        if (node.type === 'source_file') {
+          const interfaceMethods: Map<string, Set<string>> = new Map();
+          const receiverMethods: Map<string, Set<string>> = new Map();
+          const q: Parser.SyntaxNode[] = [node];
+          while (q.length) {
+            const n = q.pop()!;
+            if (n.type === 'type_declaration') {
+              for (let i = 0; i < n.namedChildCount; i++) {
+                let spec = n.namedChild(i);
+                if (spec && spec.type !== 'type_spec') {
+                  spec = spec.namedChildren.find(c => c.type === 'type_spec') || spec;
+                }
+                const name = spec?.childForFieldName('name') || spec?.namedChildren.find(c => c.type === 'type_identifier' || c.type === 'identifier');
+                const typeNode = spec?.childForFieldName('type') || spec?.namedChildren.find(c => c.type === 'interface_type') || null;
+                if (name && typeNode?.type === 'interface_type') {
+                  const iface = name.text;
+                  const methods = new Set<string>();
+                  for (let j = 0; j < typeNode.namedChildCount; j++) {
+                    const m = typeNode.namedChild(j);
+                    if (m?.type === 'method_spec') {
+                      const mn = m.childForFieldName('name') || m.namedChildren.find(c => c.type === 'field_identifier' || c.type === 'identifier');
+                      if (mn) {
+                        methods.add(mn.text);
+                      }
+                    }
+                  }
+                  interfaceMethods.set(iface, methods);
+                }
+              }
+            }
+            if (n.type === 'interface_type') {
+              let p: Parser.SyntaxNode | null = n.parent;
+              while (p && p.type !== 'type_spec') {
+                p = p.parent;
+              }
+              const name = p?.childForFieldName('name') || p?.namedChildren.find(c => c.type === 'type_identifier' || c.type === 'identifier') || null;
+              if (name) {
+                const iface = name.text;
+                const methods = new Set<string>();
+                for (let j = 0; j < n.namedChildCount; j++) {
+                  const m = n.namedChild(j);
+                  if (m?.type === 'method_spec') {
+                    const mn = m.childForFieldName('name') || m.namedChildren.find(c => c.type === 'field_identifier' || c.type === 'identifier');
+                    if (mn) {
+                      methods.add(mn.text);
+                    }
+                  }
+                }
+                interfaceMethods.set(iface, methods);
+              }
+            }
+            if (n.type === 'method_declaration') {
+              const recv = n.childForFieldName('receiver');
+              const findType = (root: Parser.SyntaxNode | null | undefined): Parser.SyntaxNode | null => {
+                if (!root) {
+                  return null;
+                }
+                const qq: Parser.SyntaxNode[] = [root];
+                while (qq.length) {
+                  const x = qq.pop()!;
+                  if (x.type === 'type_identifier' || x.type === 'identifier') {
+                    return x;
+                  }
+                  if (x.type === 'pointer_type') {
+                    const id = x.namedChildren.find(c => c.type === 'type_identifier' || c.type === 'identifier');
+                    if (id) {
+                      return id;
+                    }
+                  }
+                  for (let i = 0; i < x.namedChildCount; i++) {
+                    const c = x.namedChild(i);
+                    if (c) {
+                      qq.push(c);
+                    }
+                  }
+                }
+                return null;
+              };
+              const recvTypeNode = findType(recv);
+              const methodName = n.childForFieldName('name') || n.namedChildren.find(c => c.type === 'field_identifier' || c.type === 'identifier');
+              if (recvTypeNode && methodName) {
+                const t = recvTypeNode.text.replace(/^\*+/, '');
+                const set = receiverMethods.get(t) || new Set<string>();
+                set.add(methodName.text);
+                receiverMethods.set(t, set);
+              }
+            }
+            for (let i = 0; i < n.namedChildCount; i++) {
+              const c = n.namedChild(i);
+              if (c) {
+                q.push(c);
+              }
+            }
+          }
+          receiverMethods.forEach((methods, typeName) => {
+            interfaceMethods.forEach((ifaceMethods, ifaceName) => {
+              const implementsAll = Array.from(ifaceMethods).every(m => methods.has(m));
+              if (implementsAll && ifaceMethods.size > 0) {
+                refs.push({
+                  symbol: { name: ifaceName, type: 'interface', filePath, range: toRange(node), language: this.language },
+                  referrer: { filePath, line: node.startPosition.row + 1, column: node.startPosition.column, type: 'inherit' },
+                  context: buildContext(node),
+                });
+              }
+            });
+          });
+          if (refs.every(r => r.referrer.type !== 'inherit')) {
+            const text = lines.join('\n');
+            const ifaceRegex = /type\s+([A-Za-z_]\w*)\s+interface\s*\{([\s\S]*?)\}/g;
+            const recvRegex = /func\s*\(\s*\*?([A-Za-z_]\w*)\s*\)\s*([A-Za-z_]\w*)\s*\(/g;
+            const ifaceMap: Map<string, Set<string>> = new Map();
+            let m: RegExpExecArray | null;
+            // eslint-disable-next-line no-cond-assign
+            while ((m = ifaceRegex.exec(text)) !== null) {
+              const ifaceName = m[1];
+              const body = m[2];
+              const methodNames = new Set<string>();
+              const methodRegex = /^\s*(?<name>[A-Z_]\w*)\s*\(/gim;
+              let mm: RegExpExecArray | null;
+              // eslint-disable-next-line no-cond-assign
+              while ((mm = methodRegex.exec(body)) !== null) {
+                methodNames.add(mm.groups?.name || '');
+              }
+              if (methodNames.size > 0) {
+                ifaceMap.set(ifaceName, methodNames);
+              }
+            }
+            const recvMap: Map<string, Set<string>> = new Map();
+            let r: RegExpExecArray | null;
+            // eslint-disable-next-line no-cond-assign
+            while ((r = recvRegex.exec(text)) !== null) {
+              const typeName = r[1];
+              const methodName = r[2];
+              const set = recvMap.get(typeName) || new Set<string>();
+              set.add(methodName);
+              recvMap.set(typeName, set);
+            }
+            recvMap.forEach((methods, _) => {
+              ifaceMap.forEach((ifaceMethods, ifaceName) => {
+                const ok = Array.from(ifaceMethods).every(x => methods.has(x));
+                if (ok && ifaceMethods.size > 0) {
+                  refs.push({
+                    symbol: { name: ifaceName, type: 'interface', filePath, range: toRange(node), language: this.language },
+                    referrer: { filePath, line: node.startPosition.row + 1, column: node.startPosition.column, type: 'inherit' },
+                    context: buildContext(node),
+                  });
+                }
+              });
+            });
+          }
+        }
       }
       else if (langKey === 'cpp') {
         if (node.type === 'call_expression') {
-          const callee = node.childForFieldName('function') || node.namedChildren.find(c => c.type === 'identifier');
+          const callee = node.childForFieldName('function') || node.namedChildren.find(c => c.type === 'qualified_identifier' || c.type === 'identifier');
           pushRef(callee);
         }
       }

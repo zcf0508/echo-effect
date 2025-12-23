@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { analyzerRegistry } from './analyzer/registry';
 import { TreeSitterAnalyzer } from './analyzer/tree-sitter';
 import { scanDependenciesJsTs, scanDependenciesMultiLang } from './analyzer/tree-sitter/deps';
 import { createAutoImportResolverFn } from './resolvers';
@@ -373,7 +374,11 @@ export async function buildReverseDependencyGraphWithSymbols(
         continue;
       }
       const content = fs.readFileSync(absPath, 'utf-8');
-      const analyzer = new TreeSitterAnalyzer(lang);
+      let analyzer = analyzerRegistry.getAnalyzer(lang);
+      if (!analyzer) {
+        analyzer = new TreeSitterAnalyzer(lang);
+        analyzerRegistry.register(analyzer);
+      }
       const syms = await analyzer.extractSymbols(absPath, content);
       symbolMap.set(absPath, syms);
       const refs = await analyzer.extractReferences(absPath, content);
@@ -381,6 +386,51 @@ export async function buildReverseDependencyGraphWithSymbols(
     }
   }
   return { dependencyGraph, symbolMap, references };
+}
+
+function getDependenciesOf(fileAbs: string, reverseGraph: ReverseDependencyGraph): Set<string> {
+  const deps = new Set<string>();
+  reverseGraph.forEach((dependents, dep) => {
+    if (dependents.has(fileAbs)) {
+      deps.add(dep);
+    }
+  });
+  return deps;
+}
+
+export function buildCrossFileSymbolReferenceMap(
+  dependencyGraph: ReverseDependencyGraph,
+  symbolMap: Map<string, CodeSymbol[]>,
+  references: SymbolReference[],
+): Map<string, SymbolReference[]> {
+  const defIndexByName: Map<string, CodeSymbol[]> = new Map();
+  symbolMap.forEach((symbols) => {
+    symbols.forEach((s) => {
+      const arr = defIndexByName.get(s.name) || [];
+      arr.push(s);
+      defIndexByName.set(s.name, arr);
+    });
+  });
+  const result = new Map<string, SymbolReference[]>();
+  references.forEach((ref) => {
+    const candidates = (defIndexByName.get(ref.symbol.name) || []).filter(d => d.language === ref.symbol.language);
+    if (candidates.length === 0) {
+      return;
+    }
+    const referrerAbs = path.resolve(process.cwd(), ref.referrer.filePath);
+    const deps = getDependenciesOf(referrerAbs, dependencyGraph);
+    candidates.forEach((def) => {
+      const defAbs = path.resolve(process.cwd(), def.filePath);
+      const sameFile = defAbs === referrerAbs;
+      if (sameFile || deps.has(defAbs)) {
+        const key = `${defAbs}::${def.name}`;
+        const arr = result.get(key) || [];
+        arr.push(ref);
+        result.set(key, arr);
+      }
+    });
+  });
+  return result;
 }
 
 export async function findAffectedSymbolsFromDiff(
@@ -530,7 +580,11 @@ export async function buildEnhancedEffectFromChanges(
     if (!lang) {
       continue;
     }
-    const analyzer = new TreeSitterAnalyzer(lang);
+    let analyzer = analyzerRegistry.getAnalyzer(lang);
+    if (!analyzer) {
+      analyzer = new TreeSitterAnalyzer(lang);
+      analyzerRegistry.register(analyzer);
+    }
     const aff = await findAffectedSymbolsFromDiff(abs, ch.original, ch.modified, analyzer);
     affectedSymbols.push(...aff);
   }
