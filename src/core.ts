@@ -1,5 +1,5 @@
 import type { ICruiseOptions } from 'dependency-cruiser';
-import type { ComponentResolver, EffectReport, ReverseDependencyGraph } from './types';
+import type { ComponentResolver, DependencyGraph, EffectReport, ReverseDependencyGraph } from './types';
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -260,6 +260,34 @@ export async function scanFile(
   return sortedDependencyObject;
 }
 
+export async function buildDependencyGraph(entryPath: string): Promise<DependencyGraph> {
+  const isNuxt = isNuxtProject();
+
+  const resolveComponent = createComponentResolver();
+
+  const dependencyObject = await scanFile([entryPath], resolveComponent, isNuxt);
+
+  const Graph: DependencyGraph = new Map();
+
+  Object.keys(dependencyObject).forEach((file) => {
+    Graph.set(path.resolve(process.cwd(), file), new Set());
+  });
+
+  // 构建正向依赖图
+  for (const [file, dependencies] of Object.entries(dependencyObject)) {
+    const absFile = path.resolve(process.cwd(), file);
+    for (const dep of dependencies) {
+      const absDep = path.resolve(process.cwd(), dep);
+      if (!Graph.has(absDep)) {
+        Graph.set(absDep, new Set());
+      }
+      Graph.get(absFile)!.add(absDep);
+    }
+  }
+
+  return Graph;
+}
+
 export async function buildReverseDependencyGraph(entryPath: string): Promise<ReverseDependencyGraph> {
   const isNuxt = isNuxtProject();
 
@@ -273,9 +301,10 @@ export async function buildReverseDependencyGraph(entryPath: string): Promise<Re
     reverseGraph.set(path.resolve(process.cwd(), file), new Set());
   });
 
+  // 构建反向依赖图
   for (const [file, dependencies] of Object.entries(dependencyObject)) {
     const absFile = path.resolve(process.cwd(), file);
-    for (const dep of dependencies as string[]) {
+    for (const dep of dependencies) {
       const absDep = path.resolve(process.cwd(), dep);
       if (!reverseGraph.has(absDep)) {
         reverseGraph.set(absDep, new Set());

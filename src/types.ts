@@ -7,5 +7,6 @@ export interface EffectInfo {
 }
 
 export type EffectReport = Map<string, EffectInfo>;
+export type DependencyGraph = Map<string, Set<string>>;
 export type ReverseDependencyGraph = Map<string, Set<string>>;
 export type ComponentResolver = (name: string) => string | null;
