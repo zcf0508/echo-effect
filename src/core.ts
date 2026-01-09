@@ -260,13 +260,10 @@ export async function scanFile(
   return sortedDependencyObject;
 }
 
-export async function buildDependencyGraph(entryPath: string): Promise<DependencyGraph> {
-  const isNuxt = isNuxtProject();
-
-  const resolveComponent = createComponentResolver();
-
-  const dependencyObject = await scanFile([entryPath], resolveComponent, isNuxt);
-
+/**
+ * 构建正向依赖图
+ */
+function createForwardDependencyGraph(dependencyObject: Record<string, string[]>): DependencyGraph {
   const Graph: DependencyGraph = new Map();
 
   Object.keys(dependencyObject).forEach((file) => {
@@ -288,13 +285,20 @@ export async function buildDependencyGraph(entryPath: string): Promise<Dependenc
   return Graph;
 }
 
-export async function buildReverseDependencyGraph(entryPath: string): Promise<ReverseDependencyGraph> {
+export async function buildDependencyGraph(entryPath: string): Promise<DependencyGraph> {
   const isNuxt = isNuxtProject();
 
   const resolveComponent = createComponentResolver();
 
   const dependencyObject = await scanFile([entryPath], resolveComponent, isNuxt);
 
+  return createForwardDependencyGraph(dependencyObject);
+}
+
+/**
+ * 构建反向依赖图
+ */
+function createReverseDependencyGraph(dependencyObject: Record<string, string[]>): ReverseDependencyGraph {
   const reverseGraph: ReverseDependencyGraph = new Map();
 
   Object.keys(dependencyObject).forEach((file) => {
@@ -314,6 +318,32 @@ export async function buildReverseDependencyGraph(entryPath: string): Promise<Re
   }
 
   return reverseGraph;
+}
+
+export async function buildReverseDependencyGraph(entryPath: string): Promise<ReverseDependencyGraph> {
+  const isNuxt = isNuxtProject();
+
+  const resolveComponent = createComponentResolver();
+
+  const dependencyObject = await scanFile([entryPath], resolveComponent, isNuxt);
+
+  return createReverseDependencyGraph(dependencyObject);
+}
+
+export async function buildBidirectionalDependencyGraph(entryPath: string): Promise<{
+  forward: DependencyGraph
+  reverse: ReverseDependencyGraph
+}> {
+  const isNuxt = isNuxtProject();
+
+  const resolveComponent = createComponentResolver();
+
+  const dependencyObject = await scanFile([entryPath], resolveComponent, isNuxt);
+
+  return {
+    forward: createForwardDependencyGraph(dependencyObject),
+    reverse: createReverseDependencyGraph(dependencyObject),
+  };
 }
 
 export function calculateEffect(
