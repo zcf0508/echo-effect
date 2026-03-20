@@ -16,21 +16,31 @@
   "keywords": [],
   "sideEffects": false,
   "exports": {
-    ".": "./dist/index.js",
-    "./graph-effect": "./dist/graph-effect.js",
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./graph-effect": {
+      "import": {
+        "types": "./dist/graph-effect.d.ts",
+        "default": "./dist/graph-effect.js"
+      },
+      "require": {
+        "types": "./dist/graph-effect.d.cts",
+        "default": "./dist/graph-effect.cjs"
+      }
+    },
     "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "typesVersions": {
-    "*": {
-      "*": [
-        "./dist/*.d.ts",
-        "./*"
-      ]
-    }
-  },
   "bin": {
     "echo-effect": "./bin/cli.js"
   },
