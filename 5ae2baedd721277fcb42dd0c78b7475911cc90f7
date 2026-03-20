@@ -1,0 +1,23 @@
+package.json
+  ba1c28d2bef076b9 19-38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "5ae2baedd721277fcb42dd0c78b7475911cc90f7",
+  "prompts": {
+    "ba1c28d2bef076b9": {
+      "agent_id": {
+        "tool": "cursor",
+        "id": "56b06827-05bc-4c12-bcf9-7178dbb630af",
+        "model": "composer-2-fast"
+      },
+      "human_author": "zcf0508 <zcf0508@live.com>",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 10,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}
