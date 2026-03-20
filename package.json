@@ -17,11 +17,20 @@
   "sideEffects": false,
   "exports": {
     ".": "./dist/index.js",
+    "./graph-effect": "./dist/graph-effect.js",
     "./package.json": "./package.json"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/*.d.ts",
+        "./*"
+      ]
+    }
+  },
   "bin": {
     "echo-effect": "./bin/cli.js"
   },

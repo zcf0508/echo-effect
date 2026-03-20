@@ -13,6 +13,7 @@ export default defineConfig([
   {
     entry: [
       'src/index.ts',
+      'src/graph-effect.ts',
     ],
     format: ['cjs', 'esm'],
     platform: 'node',
