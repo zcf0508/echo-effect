@@ -2,7 +2,8 @@ import type { EffectReport } from './types';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { buildReverseDependencyGraph, calculateEffect, getStagedFiles } from './core';
+import { buildReverseDependencyGraph, getStagedFiles } from './core';
+import { calculateEffect } from './graph-effect';
 import { consola } from './utils';
 
 function printReport(report: EffectReport): void {
